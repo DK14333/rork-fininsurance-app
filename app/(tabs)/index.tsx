@@ -159,7 +159,7 @@ export default function DashboardScreen() {
           ) : (
             <View style={styles.portfolioCard}>
               <View style={styles.portfolioHeader}>
-                <Text style={styles.portfolioLabel}>Gesamtpolicenwert</Text>
+                <Text style={styles.portfolioLabel}>Gesamtinvestment</Text>
                 <View style={styles.trendBadge}>
                   <ArrowUpRight size={14} color={Colors.text} strokeWidth={1.5} />
                   <Text style={styles.trendText}>+{averageRendite.toFixed(1)}%</Text>

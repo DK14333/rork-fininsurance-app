@@ -125,7 +125,10 @@ export const mapApiPolicyToPolicy = (apiPolicy: any): Policy => {
     versicherer: getVal(apiPolicy, ['versicherer', 'insurer', 'company']) || 'Unbekannt',
     produkt: getVal(apiPolicy, ['produkt', 'product', 'name', 'title']) || 'Police',
     monatsbeitrag: Number(getVal(apiPolicy, ['monatsbeitrag', 'monthlyContribution', 'monthly_contribution', 'beitrag', 'amount']) || 0),
-    depotwert: Number(getVal(apiPolicy, ['depotwert', 'portfolioValue', 'portfolio_value', 'policenwert', 'value', 'current_value', 'investments', 'kapital']) || 0),
+    depotwert: Number(getVal(apiPolicy, [
+      'depotwert', 'portfolioValue', 'portfolio_value', 'policenwert', 'value', 'current_value', 'investments', 'kapital',
+      'market_value', 'marketValue', 'nav', 'net_asset_value', 'account_value', 'account_balance', 'balance', 'saldo', 'investment_value'
+    ]) || 0),
     rendite: Number(getVal(apiPolicy, ['rendite', 'performance', 'profit', 'gewinn']) || 0),
     performanceHistorie: getVal(apiPolicy, ['performanceHistorie', 'performance_historie', 'history']) || [],
     kategorie: getVal(apiPolicy, ['kategorie', 'category', 'type']) || 'Sach',

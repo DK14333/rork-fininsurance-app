@@ -109,7 +109,7 @@ export default function PoliciesScreen() {
         <View style={styles.policyValues}>
           {item.depotwert > 0 ? (
             <>
-              <Text style={styles.policyValueLabel}>Policenwert</Text>
+              <Text style={styles.policyValueLabel}>Investment</Text>
               <Text style={styles.policyValue}>{formatCurrency(item.depotwert)}</Text>
             </>
           ) : (

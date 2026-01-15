@@ -17,7 +17,7 @@ import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function Verify2FAScreen() {
-  const [code, setCode] = useState(['', '', '', '', '', '']);
+  const [code, setCode] = useState(['', '', '', '', '', '', '', '']);
   const [timer, setTimer] = useState(30);
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
@@ -39,22 +39,32 @@ export default function Verify2FAScreen() {
         
         // If we are here and logged in, let's just proceed to phone check.
         const checkPhone = async () => {
-             // Basic check: if we have a session, we should move on.
-             // Ideally we check for phone verification status here too.
+             // Check if user has a verified phone number for 2FA
              if (user.phone) {
-                 // Assuming if they have a phone, they need to verify it or are done.
-                 // To avoid infinite loops sending SMS, we might just go to tabs 
-                 // or let the user navigate. 
-                 // But for strict compliance, let's check if we should send them to verify-sms.
-                 // For now, let's redirect to tabs to avoid blocking access if logic fails.
-                 router.replace('/(tabs)');
+                 // Send OTP to phone and redirect to verify-sms
+                 // We must catch error in case sending fails
+                 try {
+                     await sendPhoneOTP(user.phone);
+                     router.replace({
+                        pathname: '/verify-sms',
+                        params: { phone: user.phone, type: 'sms' }
+                     });
+                 } catch (e) {
+                     console.error('Error sending SMS on auto-check:', e);
+                     // Fallback to tabs if SMS fails? Or stay here?
+                     // Better to let them know or try again.
+                     // For now, if we can't send SMS, we might be stuck.
+                     // But if we are already logged in, maybe we just go to tabs to not lock out user?
+                     // User complained about "loading forever", so let's be careful.
+                     router.replace('/(tabs)');
+                 }
              } else {
                  router.replace('/setup-phone');
              }
         }
         checkPhone();
     }
-  }, [user, isLoading]);
+  }, [user, isLoading, sendPhoneOTP]);
 
   useEffect(() => {
     // Focus first input on mount
@@ -79,12 +89,12 @@ export default function Verify2FAScreen() {
     
     // Handle paste
     if (text.length > 1) {
-      const pastedCode = text.slice(0, 6).split('');
-      for (let i = 0; i < 6; i++) {
+      const pastedCode = text.slice(0, 8).split('');
+      for (let i = 0; i < 8; i++) {
         if (pastedCode[i]) newCode[i] = pastedCode[i];
       }
       setCode(newCode);
-      if (newCode[5]) inputRefs.current[5]?.focus();
+      if (newCode[7]) inputRefs.current[7]?.focus();
       if (newCode.every(c => c !== '')) {
         verifyCode(newCode.join(''));
       }
@@ -96,12 +106,12 @@ export default function Verify2FAScreen() {
     setCode(newCode);
 
     // Auto-advance
-    if (text && index < 5) {
+    if (text && index < 7) {
       inputRefs.current[index + 1]?.focus();
     }
 
     // Auto-verify when filled
-    if (newCode.every((c) => c !== '') && index === 5) {
+    if (newCode.every((c) => c !== '') && index === 7) {
       verifyCode(newCode.join(''));
     }
   };
@@ -158,7 +168,7 @@ export default function Verify2FAScreen() {
         }
       } else {
         Alert.alert('Fehler', 'Der eingegebene Code ist falsch oder abgelaufen.');
-        setCode(['', '', '', '', '', '']);
+        setCode(['', '', '', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
       }
     } catch (error) {
@@ -176,7 +186,7 @@ export default function Verify2FAScreen() {
     try {
       await resendOTP();
       setTimer(30);
-      setCode(['', '', '', '', '', '']);
+      setCode(['', '', '', '', '', '', '', '']);
       inputRefs.current[0]?.focus();
       Alert.alert('Code gesendet', 'Ein neuer Code wurde an Ihre E-Mail gesendet.');
     } catch (error) {
@@ -211,7 +221,7 @@ export default function Verify2FAScreen() {
 
           <Text style={styles.title}>Code eingeben</Text>
           <Text style={styles.subtitle}>
-            Wir haben Ihnen einen 6-stelligen Code an {maskedEmail} gesendet.
+            Wir haben Ihnen einen 8-stelligen Code an {maskedEmail} gesendet.
           </Text>
           <Text style={styles.instruction}>
             Bitte geben Sie den Code ein, um sich anzumelden.
@@ -232,7 +242,7 @@ export default function Verify2FAScreen() {
                 onChangeText={(text) => handleCodeChange(text, index)}
                 onKeyPress={(e) => handleKeyPress(e, index)}
                 keyboardType="number-pad"
-                maxLength={6}
+                maxLength={8}
                 selectTextOnFocus
                 editable={!isLoading}
                 testID={`otp-input-${index}`}
@@ -322,18 +332,18 @@ const styles = StyleSheet.create({
   codeContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
     width: '100%',
     marginBottom: 24,
   },
   codeInput: {
-    width: 44,
-    height: 56,
+    width: 36,
+    height: 48,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.border,
     textAlign: 'center',
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '600',
     color: Colors.text,
     backgroundColor: Colors.background,
