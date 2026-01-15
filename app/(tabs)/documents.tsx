@@ -16,9 +16,8 @@ import { Search, FileText, Calendar, ExternalLink, AlertCircle, Clock } from 'lu
 import { useQuery } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { Document } from '@/types';
-import { mockDocuments } from '@/mocks/documents';
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchUserDocuments, mapApiDocumentToDocument, getUserId } from '@/services/base44';
+import { fetchUserDocuments, mapApiDocumentToDocument } from '@/services/base44';
 
 const categories = ['Alle', 'Vertrag', 'Rechnung', 'Bescheinigung', 'Sonstiges'];
 
@@ -30,32 +29,18 @@ export default function DocumentsScreen() {
   const { data: documents = [], isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ['documents', user?.id, isAuthenticated],
     queryFn: async () => {
-      let userId = user?.id || await getUserId();
-
-      // If we are authenticated but have no userId, return empty to avoid leaking mock data
-      if (isAuthenticated && !userId) {
-         // Try to get userId again?
-         const storedId = await getUserId();
-         if (storedId) {
-             userId = storedId;
-         } else {
-             return [];
-         }
+      if (!isAuthenticated) {
+        console.log('Nicht authentifiziert');
+        return [];
       }
 
-      if (!userId) {
-        console.log('No user ID available, using mock data');
-        // If authenticated, do NOT use mock data
-        if (isAuthenticated) return [];
-        return mockDocuments;
-      }
       try {
-        console.log('Fetching documents from API for user:', userId);
+        console.log('Fetching documents from API...');
         const apiDocuments = await fetchUserDocuments();
         
         if (!apiDocuments || !Array.isArray(apiDocuments)) {
-            console.log('[Documents] No documents returned or invalid format');
-            return [];
+          console.log('[Documents] No documents returned or invalid format');
+          return [];
         }
 
         return apiDocuments.map(mapApiDocumentToDocument);
@@ -64,7 +49,7 @@ export default function DocumentsScreen() {
         throw err;
       }
     },
-    enabled: true,
+    enabled: !!isAuthenticated,
     staleTime: 5 * 60 * 1000,
   });
 
