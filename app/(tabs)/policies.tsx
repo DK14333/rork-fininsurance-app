@@ -16,7 +16,7 @@ import { useQuery } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { Policy } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchUserPolicies, mapApiPolicyToPolicy, getUserId } from '@/services/base44';
+import { fetchUserPolicies, mapApiPolicyToPolicy } from '@/services/base44';
 
 const categories = ['Alle', 'Rente', 'Fonds', 'Leben', 'Kranken', 'Sach'];
 
@@ -28,45 +28,27 @@ export default function PoliciesScreen() {
   const { data: policies = [], isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ['policies', user?.id, isAuthenticated],
     queryFn: async () => {
-      let userId = user?.id || await getUserId();
-      
-      // If we are authenticated but have no userId, return empty to avoid leaking mock data
-      // OR try to fetch user ID if possible?
-      if (isAuthenticated && !userId) {
-        console.log('[Policies] Authenticated but no userId');
-        // Try to get userId again?
-        const storedId = await getUserId();
-        if (storedId) {
-            userId = storedId;
-        } else {
-            return [];
-        }
-      }
-
-      if (!userId) {
-        console.log('No user ID available, using mock data');
-        // IMPORTANT: In production/testing with real backend, we should NOT show mock data
-        // if the user expects real data.
-        // But for development it's fine. 
-        // However, user complained about missing data.
+      if (!isAuthenticated) {
+        console.log('Nicht authentifiziert');
         return [];
       }
+
       try {
-        console.log('Fetching policies from API for user:', userId);
+        console.log('Fetching policies from API...');
         const apiPolicies = await fetchUserPolicies();
-        
+
         if (!apiPolicies || apiPolicies.length === 0) {
-            console.log('[Policies] No policies returned from API for user:', userId);
-            return [];
+          console.log('No policies returned from API');
+          return [];
         }
-        
+
         return apiPolicies.map(mapApiPolicyToPolicy);
       } catch (err) {
         console.error('Error in policies queryFn:', err);
         throw err;
       }
     },
-    enabled: true,
+    enabled: !!isAuthenticated,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -320,8 +302,8 @@ const styles = StyleSheet.create({
   },
   policyCard: {
     backgroundColor: Colors.background,
-    borderRadius: 10,
-    padding: 20,
+    borderRadius: 12,
+    padding: 16,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -333,48 +315,46 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   categoryBadge: {
+    backgroundColor: Colors.backgroundSecondary,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
-    backgroundColor: Colors.backgroundSecondary,
   },
   categoryBadgeText: {
     fontSize: 12,
     fontWeight: '500' as const,
-    color: Colors.textSecondary,
+    color: Colors.text,
   },
   contractNumber: {
     fontSize: 12,
     color: Colors.textTertiary,
   },
   policyName: {
-    fontSize: 17,
-    fontWeight: '500' as const,
+    fontSize: 16,
+    fontWeight: '600' as const,
     color: Colors.text,
     marginBottom: 4,
   },
   policyInsurer: {
     fontSize: 14,
     color: Colors.textSecondary,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   policyFooter: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
+    justifyContent: 'space-between',
   },
   policyValues: {
     flex: 1,
   },
   policyValueLabel: {
     fontSize: 12,
-    color: Colors.textTertiary,
-    marginBottom: 2,
+    color: Colors.textSecondary,
+    marginBottom: 4,
   },
   policyValue: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '600' as const,
     color: Colors.text,
   },
@@ -382,52 +362,53 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginRight: 12,
     backgroundColor: Colors.backgroundSecondary,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 6,
+    borderRadius: 8,
+    marginRight: 8,
   },
   renditeText: {
     fontSize: 14,
     fontWeight: '500' as const,
     color: Colors.text,
   },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  emptyStateText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-  },
   loadingState: {
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 60,
-    gap: 16,
   },
   loadingText: {
-    fontSize: 16,
+    marginTop: 12,
+    fontSize: 14,
     color: Colors.textSecondary,
   },
   errorState: {
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 60,
-    gap: 16,
   },
   errorText: {
+    marginTop: 16,
     fontSize: 16,
+    fontWeight: '500' as const,
     color: Colors.textSecondary,
   },
   retryButton: {
+    marginTop: 20,
+    backgroundColor: Colors.text,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: Colors.text,
     borderRadius: 8,
   },
   retryButtonText: {
     fontSize: 14,
     fontWeight: '600' as const,
     color: Colors.background,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
   },
 });
