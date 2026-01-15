@@ -33,7 +33,7 @@ export default function LoginScreen() {
     try {
       const result = await login(email.trim());
       
-      if (result === 'mfa_required') {
+      if (result === 'mfa_required' || result === 'check_email') {
         router.push('/verify-2fa');
         return;
       }

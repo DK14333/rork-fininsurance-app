@@ -127,17 +127,20 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       setTempEmail(email);
       await AsyncStorage.setItem(TEMP_EMAIL_KEY, email);
 
+      const redirectTo = 'rork-app://auth-callback';
+      
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          shouldCreateUser: true, // Allow creating user if not exists
+          emailRedirectTo: redirectTo,
+          shouldCreateUser: true,
         },
       });
 
       if (error) throw error;
       
-      // Return 'mfa_required' to trigger the flow in UI (Verify2FAScreen)
-      return 'mfa_required';
+      // Return 'check_email' to indicate magic link was sent
+      return 'check_email';
     } catch (error) {
       console.error('Login error:', error);
       throw error;

@@ -169,7 +169,10 @@ export default function Verify2FAScreen() {
 
           <Text style={styles.title}>E-Mail Verifizierung</Text>
           <Text style={styles.subtitle}>
-            Bitte geben Sie den 6-stelligen Code ein, den wir an {maskedEmail} gesendet haben.
+            Wir haben Ihnen eine E-Mail mit einem Bestätigungslink und einem Code an {maskedEmail} gesendet.
+          </Text>
+          <Text style={styles.instruction}>
+            Tippen Sie auf den Link in der E-Mail oder geben Sie den Code hier ein:
           </Text>
 
           <View style={styles.codeContainer}>
@@ -264,8 +267,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.textSecondary,
     textAlign: 'center',
-    marginBottom: 40,
-    lineHeight: 24,
+    marginBottom: 12,
+  },
+  instruction: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 24,
   },
   codeContainer: {
     flexDirection: 'row',
