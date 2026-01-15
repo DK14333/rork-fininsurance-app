@@ -1,316 +1,254 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState, useCallback } from 'react';
+import { Session } from '@supabase/supabase-js';
+import { supabase } from '@/services/supabase';
 import { User } from '@/types';
-import {
-  openBase44Login,
-  saveToken,
-  getToken,
-  removeToken,
-  extractTokenFromUrl,
-  fetchCurrentUser,
-  saveUserId,
-  getUserId,
-  removeUserId,
-  mapApiUserToUser,
-  loginWithCredentials,
-} from '@/services/base44';
 
-const AUTH_USER_KEY = 'auth_user';
+// Key to store the email temporarily for verification step if app restarts
+const TEMP_EMAIL_KEY = 'temp_auth_email';
 
 export const [AuthProvider, useAuth] = createContextHook(() => {
   const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [tempToken, setTempToken] = useState<string | null>(null);
-  const [tempUser, setTempUser] = useState<User | null>(null);
+  const [tempEmail, setTempEmail] = useState<string | null>(null);
 
-  const parseJwtPayload = (token: string): any | null => {
+  const refreshUserData = useCallback(async (userId: string) => {
     try {
-      const base64Url = token.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(
-        atob(base64)
-          .split('')
-          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-          .join('')
-      );
-      return JSON.parse(jsonPayload);
-    } catch (error) {
-      console.log('Error parsing JWT:', error);
-      return null;
-    }
-  };
-
-  const loadUserFromToken = useCallback(async () => {
-    try {
-      const token = await getToken();
-      if (token) {
-        console.log('Token found, fetching user data...');
-        
-        let userId = await getUserId();
-        
-        if (!userId) {
-          const payload = parseJwtPayload(token);
-          console.log('JWT payload:', payload);
-          userId = payload?.sub || payload?.userId || payload?.user_id || payload?.id;
-          
-          if (userId) {
-            await saveUserId(userId);
-          }
-        }
-        
-        if (!userId) {
-          console.log('No user ID found in token or storage');
-          const storedUser = await AsyncStorage.getItem(AUTH_USER_KEY);
-          if (storedUser) {
-            const parsed = JSON.parse(storedUser);
-            setUser(parsed);
-            setIsAuthenticated(true);
-            return true;
-          }
-          return false;
-        }
-        
-        try {
-          const userData = await fetchCurrentUser(userId);
-          console.log('User data fetched:', userData);
-          
-          const mappedUser = mapApiUserToUser(userData);
-          
-          await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(mappedUser));
-          setUser(mappedUser);
-          setIsAuthenticated(true);
-          return true;
-        } catch (apiError) {
-          console.log('Error fetching user from API:', apiError);
-          const storedUser = await AsyncStorage.getItem(AUTH_USER_KEY);
-          if (storedUser) {
-            setUser(JSON.parse(storedUser));
-            setIsAuthenticated(true);
-            return true;
-          }
-          await removeToken();
-          await removeUserId();
-          return false;
-        }
-      }
-      return false;
-    } catch (error) {
-      console.log('Error loading user:', error);
-      return false;
-    }
-  }, []);
-
-  useEffect(() => {
-    const init = async () => {
-      await loadUserFromToken();
-      setIsLoading(false);
-    };
-    init();
-  }, [loadUserFromToken]);
-
-  const loginWithBase44 = useCallback(async (): Promise<boolean> => {
-    try {
-      console.log('Starting Base44 login...');
-      const result = await openBase44Login();
+      // Try to fetch user data from Supabase 'users' table or similar
+      // If that fails, fallback to Base44 or just use Auth metadata
       
-      console.log('Base44 login result:', result.type);
-      
-      if (result.type === 'success' && result.url) {
-        const token = extractTokenFromUrl(result.url);
-        
-        if (token) {
-          await saveToken(token);
-          const success = await loadUserFromToken();
-          return success;
-        } else {
-          console.log('No token found in redirect URL');
-          return false;
-        }
-      } else if (result.type === 'cancel') {
-        console.log('Login cancelled by user');
-        return false;
-      }
-      
-      return false;
-    } catch (error) {
-      console.log('Base44 login error:', error);
-      return false;
-    }
-  }, [loadUserFromToken]);
+      // Attempt 1: Fetch from Supabase "public.users" table (if it exists and is synced)
+      // We assume a table "users" or "profiles" linked by id
+      const { data: profileData, error: profileError } = await supabase
+        .from('users') // or 'profiles'
+        .select('*')
+        .eq('id', userId)
+        .single();
 
-  const login = useCallback(async (email: string): Promise<boolean | 'mfa_required'> => {
-    try {
-      console.log('Starting login with email...');
-      const response = await loginWithCredentials(email);
-      
-      if (response.requiresMFA) {
-        console.log('MFA required for user');
-        setTempToken(response.token);
-        if (response.user) {
-           setTempUser(mapApiUserToUser(response.user));
-        }
-        return 'mfa_required';
-      }
-
-      await saveToken(response.token);
-      
-      let userId = response.userId;
-
-      // If userId is missing in response, try to extract from token
-      if (!userId && response.token) {
-        const payload = parseJwtPayload(response.token);
-        userId = payload?.sub || payload?.userId || payload?.user_id || payload?.id;
-        console.log('Extracted userId from token:', userId);
-      }
-
-      if (userId) {
-        await saveUserId(userId);
-      } else {
-        console.error('Login successful but no User ID found in response or token');
-      }
-      
-      if (response.user) {
-        const mappedUser = mapApiUserToUser(response.user);
-        
-        // Ensure ID is set on the user object
-        if (!mappedUser.id && userId) {
-            mappedUser.id = userId;
-        }
-        
-        await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(mappedUser));
+      if (profileData && !profileError) {
+        // Map Supabase profile to User type
+        const mappedUser: User = {
+           id: profileData.id,
+           name: profileData.name || profileData.full_name || 'Benutzer',
+           email: profileData.email || session?.user.email || '',
+           phone: profileData.phone || profileData.telefon || '',
+           avatarUrl: profileData.avatar_url,
+           language: profileData.language || 'de',
+           createdAt: profileData.created_at || new Date().toISOString(),
+           // Add other fields if available
+           geburtsdatum: profileData.geburtsdatum,
+           postleitzahl: profileData.postleitzahl,
+           beruf: profileData.beruf,
+           user_type: profileData.user_type,
+        };
         setUser(mappedUser);
-        setIsAuthenticated(true);
-        return true;
+      } else {
+        console.log('Supabase profile not found or error, using auth metadata:', profileError?.message);
+        
+        // Fallback: Use Auth User Metadata
+        const authUser = session?.user || (await supabase.auth.getUser()).data.user;
+        if (authUser) {
+           const mappedUser: User = {
+             id: authUser.id,
+             email: authUser.email || '',
+             phone: authUser.phone || '',
+             name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || 'Benutzer',
+             avatarUrl: authUser.user_metadata?.avatar_url,
+             language: 'de',
+             createdAt: authUser.created_at,
+           };
+           setUser(mappedUser);
+        }
       }
-      
-      const success = await loadUserFromToken();
-      return success;
     } catch (error) {
-      console.log('Login error:', error);
+      console.error('Error refreshing user data:', error);
+    }
+  }, [session]);
+
+  // Restore session on mount
+  useEffect(() => {
+    let mounted = true;
+
+    const initializeAuth = async () => {
+      try {
+        // 1. Get Session
+        const { data: { session: existingSession } } = await supabase.auth.getSession();
+        
+        if (mounted) {
+          if (existingSession) {
+            setSession(existingSession);
+            await refreshUserData(existingSession.user.id);
+          }
+          
+          // Restore temp email if we were in the middle of OTP
+          const storedEmail = await AsyncStorage.getItem(TEMP_EMAIL_KEY);
+          if (storedEmail) {
+            setTempEmail(storedEmail);
+          }
+          
+          setIsLoading(false);
+        }
+
+        // 2. Listen for auth changes
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(
+          async (_event, newSession) => {
+            if (mounted) {
+              setSession(newSession);
+              if (newSession) {
+                await refreshUserData(newSession.user.id);
+              } else {
+                setUser(null);
+              }
+              setIsLoading(false);
+            }
+          }
+        );
+
+        return () => {
+          subscription.unsubscribe();
+        };
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+        if (mounted) setIsLoading(false);
+      }
+    };
+
+    initializeAuth();
+
+    return () => {
+      mounted = false;
+    };
+  }, [refreshUserData]);
+
+  const login = useCallback(async (email: string) => {
+    try {
+      setTempEmail(email);
+      await AsyncStorage.setItem(TEMP_EMAIL_KEY, email);
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: true, // Allow creating user if not exists
+        },
+      });
+
+      if (error) throw error;
+      
+      // Return 'mfa_required' to trigger the flow in UI (Verify2FAScreen)
+      return 'mfa_required';
+    } catch (error) {
+      console.error('Login error:', error);
       throw error;
     }
-  }, [loadUserFromToken]);
-
-  const verifyOTP = useCallback(async (code: string): Promise<boolean> => {
-    // In a real app with server-side 2FA, we would send the code to the server
-    // For this implementation based on instructions, we are assuming client-side check 
-    // against a sent code, OR we might need to call an endpoint.
-    // However, the instructions imply we might just validate it locally if we generated it,
-    // OR call an endpoint if the server sent it.
-    // The instructions said: 
-    // "OPTION A: SMS-OTP ... 4. App validiert Code gegen generierten Code ... 5. Bei erfolg: Token speichern"
-    // BUT the server response in "OPTION A" says "Response: { ... token: ... requiresMFA: true ... }".
-    // This implies the server issued the token but marked it as "requiring MFA".
-    // Usually, this means the token is a "pre-auth" token or the client needs to verify MFA to "unlock" it.
-    // But since we don't have a specific "verify MFA" endpoint in the instructions (except the generic /api/login),
-    // and the instruction says "App generiert 6-stelligen Code" (Option A step 1),
-    // it seems the App is responsible for generating and sending the code via SMS/Email using some 3rd party service?
-    // "Sendet SMS an user.telefon (Twilio, AWS SNS, etc.)" -> This usually happens on backend.
-    
-    // Let's look closer at "OPTION A":
-    // 1. App generiert 6-stelligen Code -> This is weird if it's client side. 
-    // Usually backend generates code.
-    // But let's assume for this task we mock the verification or call a hypothetical endpoint.
-    
-    // Actually, looking at the instruction:
-    // "1. App generiert 6-stelligen Code ... 2. Sendet SMS ... 4. App validiert Code"
-    // This suggests a client-side logic OR a backend logic that was described as "App" (the whole system).
-    // Given the constraints (I can't add Twilio/SNS keys easily), and the context,
-    // I will simulate the verification success. 
-    // In a real scenario, we would POST /api/verify-2fa { code, tempToken }.
-    
-    // Since I don't have a verify endpoint, I will assume the code is always valid for "123456" 
-    // or just accept it to proceed with the flow,
-    // OR even better, I'll just save the token I already have in `tempToken`.
-    
-    console.log('Verifying OTP:', code);
-    
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    if (code.length === 6 && tempToken) {
-        // Success
-        await saveToken(tempToken);
-        
-        // Finalize login
-        if (tempUser) {
-             let userId = tempUser.id;
-             if (userId) {
-                await saveUserId(userId);
-             }
-             await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(tempUser));
-             setUser(tempUser);
-             setIsAuthenticated(true);
-        } else {
-             await loadUserFromToken();
-        }
-        
-        setTempToken(null);
-        setTempUser(null);
-        return true;
-    }
-    
-    return false;
-  }, [tempToken, tempUser, loadUserFromToken]);
-
-  const resendOTP = useCallback(async () => {
-    console.log('Resending OTP...');
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    return true;
   }, []);
 
-  const handleAuthCallback = useCallback(async (url: string): Promise<boolean> => {
+  const verifyOTP = useCallback(async (code: string, emailToVerify?: string) => {
     try {
-      console.log('Handling auth callback:', url);
-      const token = extractTokenFromUrl(url);
-      
-      if (token) {
-        await saveToken(token);
-        const success = await loadUserFromToken();
-        return success;
+      const email = emailToVerify || tempEmail;
+      if (!email) throw new Error('No email found for verification');
+
+      const { data, error } = await supabase.auth.verifyOtp({
+        email,
+        token: code,
+        type: 'email',
+      });
+
+      if (error) throw error;
+
+      if (data.session) {
+        setSession(data.session);
+        await refreshUserData(data.session.user.id);
+        
+        // Clear temp email
+        await AsyncStorage.removeItem(TEMP_EMAIL_KEY);
+        setTempEmail(null);
+        return true;
       }
       return false;
     } catch (error) {
-      console.log('Auth callback error:', error);
+      console.error('Verify OTP error:', error);
       return false;
     }
-  }, [loadUserFromToken]);
+  }, [tempEmail, refreshUserData]);
+
+  const resendOTP = useCallback(async () => {
+    if (!tempEmail) return;
+    try {
+        const { error } = await supabase.auth.signInWithOtp({
+            email: tempEmail,
+        });
+        if (error) throw error;
+        return true;
+    } catch (error) {
+        console.error('Resend OTP error:', error);
+        throw error;
+    }
+  }, [tempEmail]);
 
   const logout = useCallback(async () => {
     try {
-      await removeToken();
-      await removeUserId();
-      await AsyncStorage.removeItem(AUTH_USER_KEY);
+      await supabase.auth.signOut();
       setUser(null);
-      setIsAuthenticated(false);
-      setTempToken(null);
-      setTempUser(null);
-      console.log('Logged out successfully');
+      setSession(null);
+      setTempEmail(null);
+      await AsyncStorage.removeItem(TEMP_EMAIL_KEY);
     } catch (error) {
-      console.log('Logout error:', error);
+      console.error('Logout error:', error);
     }
   }, []);
 
   const updateUser = useCallback(async (updates: Partial<User>) => {
-    if (user) {
-      const updatedUser = { ...user, ...updates };
-      await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(updatedUser));
-      setUser(updatedUser);
-    }
-  }, [user]);
+    if (!user || !session) return;
+    
+    try {
+      // 1. Update in Supabase DB "users" table
+      const { error } = await supabase
+        .from('users')
+        .update(updates)
+        .eq('id', user.id);
 
-  const refreshUser = useCallback(async () => {
-    await loadUserFromToken();
-  }, [loadUserFromToken]);
+      if (error) {
+        console.error('Error updating user in DB:', error);
+        // If table doesn't exist, we might try to update auth metadata?
+        // But let's assume table exists for now or just update local state.
+      } else {
+        // Refetch to be sure
+        await refreshUserData(user.id);
+      }
+      
+      // Optimistic update
+      setUser(prev => prev ? { ...prev, ...updates } : null);
+      
+    } catch (error) {
+      console.error('Update user error:', error);
+    }
+  }, [user, session, refreshUserData]);
+
+  // Compatibility helpers for existing code
+  const loginWithBase44 = useCallback(async () => {
+      console.warn('loginWithBase44 is deprecated in favor of Supabase');
+      return false;
+  }, []);
+
+  const handleAuthCallback = useCallback(async (url?: string) => {
+      // Supabase handles deep links via createClient config mostly, 
+      // but we might need to handle manual URL parsing if needed.
+      // For OTP flow, we don't strictly need this unless using Magic Links.
+      console.log('handleAuthCallback called with:', url);
+      return false;
+  }, []);
+  
+  // Provide a way to get the temp user/email for UI
+  const tempUser = tempEmail ? { email: tempEmail } as any : null;
 
   return {
     user,
-    tempUser,
+    session,
+    tempUser, // Exposed for Verify2FAScreen
     isLoading,
-    isAuthenticated,
+    isAuthenticated: !!session,
     login,
     loginWithBase44,
     verifyOTP,
@@ -318,6 +256,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     handleAuthCallback,
     logout,
     updateUser,
-    refreshUser,
+    refreshUser: async () => {
+        if (session?.user?.id) await refreshUserData(session.user.id);
+    },
   };
 });
