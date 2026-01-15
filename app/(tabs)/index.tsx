@@ -18,7 +18,6 @@ import {
   Calendar,
   ArrowUpRight,
   Sparkles,
-  Newspaper,
   Clock,
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
@@ -30,26 +29,20 @@ import { fetchUserPolicies, mapApiPolicyToPolicy } from '@/services/base44';
 export default function DashboardScreen() {
   const { user, isAuthenticated, isLoading } = useAuth();
 
-  const { data: policies = [], refetch } = useQuery({
+  const { data: policies = [], refetch, isLoading: isPoliciesLoading } = useQuery({
     queryKey: ['policies', user?.id, isAuthenticated],
     queryFn: async () => {
-      if (!isAuthenticated) {
-        console.log('Nicht authentifiziert');
-        return [];
-      }
-
+      if (!isAuthenticated) return [];
+      
       try {
-        console.log('Fetching policies from API...');
         const apiPolicies = await fetchUserPolicies();
-
         if (!Array.isArray(apiPolicies)) {
           console.error('fetchUserPolicies returned non-array:', apiPolicies);
           return [];
         }
-
         return apiPolicies.map(mapApiPolicyToPolicy);
       } catch (err) {
-        console.log('Error fetching policies for dashboard:', err);
+        console.error('Error fetching policies:', err);
         return [];
       }
     },
@@ -118,7 +111,11 @@ export default function DashboardScreen() {
             </View>
           </View>
 
-          {policies.length === 0 ? (
+          {isPoliciesLoading ? (
+            <View style={styles.portfolioCard}>
+              <ActivityIndicator size="large" color={Colors.text} />
+            </View>
+          ) : policies.length === 0 ? (
             <View style={styles.portfolioCard}>
               <View style={{ alignItems: 'center', paddingVertical: 24, gap: 16 }}>
                 <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: Colors.backgroundSecondary, alignItems: 'center', justifyContent: 'center' }}>
@@ -218,7 +215,7 @@ export default function DashboardScreen() {
             </View>
           )}
 
-          {policies.length > 0 && (
+          {policies.length > 0 && marketInsight && (
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Daily Market Insights</Text>
@@ -227,28 +224,20 @@ export default function DashboardScreen() {
                   <Text style={styles.aiBadgeText}>AI Powered</Text>
                 </View>
               </View>
-
-              {isInsightLoading ? (
-                <View style={styles.insightCard}>
-                  <ActivityIndicator size="small" color={Colors.textSecondary} />
-                  <Text style={styles.insightLoading}>Generiere Marktanalyse...</Text>
-                </View>
-              ) : marketInsight ? (
-                <View style={styles.insightCard}>
-                  <View style={styles.insightHeader}>
-                    <Newspaper size={18} color={Colors.text} strokeWidth={1.5} />
-                    <Text style={styles.insightDate}>
-                      {insightDate
-                        ? new Date(insightDate).toLocaleDateString('de-DE', {
-                            day: '2-digit',
-                            month: 'short',
-                          })
-                        : 'Heute'}
-                    </Text>
-                  </View>
-                  <Text style={styles.insightText}>{marketInsight}</Text>
-                </View>
-              ) : null}
+              <View style={styles.insightCard}>
+                {isInsightLoading ? (
+                  <ActivityIndicator size="small" color={Colors.text} />
+                ) : (
+                  <>
+                    <Text style={styles.insightText}>{marketInsight}</Text>
+                    {insightDate && (
+                      <Text style={styles.insightDate}>
+                        Aktualisiert: {new Date(insightDate).toLocaleDateString('de-DE')}
+                      </Text>
+                    )}
+                  </>
+                )}
+              </View>
             </View>
           )}
         </ScrollView>
@@ -281,34 +270,32 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 24,
-    paddingTop: 16,
+    paddingTop: 8,
     paddingBottom: 24,
   },
   greeting: {
     fontSize: 16,
     color: Colors.textSecondary,
-    marginBottom: 4,
   },
   userName: {
     fontSize: 28,
     fontWeight: '700' as const,
     color: Colors.text,
+    marginTop: 4,
     letterSpacing: -0.5,
   },
   portfolioCard: {
     marginHorizontal: 24,
-    marginBottom: 20,
-    backgroundColor: Colors.background,
+    padding: 24,
+    backgroundColor: Colors.backgroundSecondary,
     borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    marginBottom: 24,
   },
   portfolioHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   portfolioLabel: {
     fontSize: 14,
@@ -317,14 +304,14 @@ const styles = StyleSheet.create({
   trendBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.backgroundSecondary,
-    paddingHorizontal: 12,
+    backgroundColor: Colors.background,
+    paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 20,
+    borderRadius: 12,
     gap: 4,
   },
   trendText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600' as const,
     color: Colors.text,
   },
@@ -338,13 +325,9 @@ const styles = StyleSheet.create({
   portfolioStats: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
   },
   portfolioStat: {
-    alignItems: 'center',
+    flex: 1,
     gap: 6,
   },
   portfolioStatValue: {
@@ -353,47 +336,47 @@ const styles = StyleSheet.create({
     color: Colors.text,
   },
   portfolioStatLabel: {
-    fontSize: 12,
+    fontSize: 13,
     color: Colors.textSecondary,
   },
   portfolioDivider: {
     width: 1,
     height: 40,
     backgroundColor: Colors.border,
+    marginHorizontal: 16,
   },
   quickActions: {
     flexDirection: 'row',
     paddingHorizontal: 24,
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 32,
   },
   quickAction: {
     flex: 1,
-    backgroundColor: Colors.background,
-    borderRadius: 12,
-    padding: 16,
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: Colors.backgroundSecondary,
+    padding: 16,
+    borderRadius: 12,
+    gap: 12,
   },
   quickActionIcon: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     borderRadius: 10,
-    backgroundColor: Colors.backgroundSecondary,
+    backgroundColor: Colors.background,
     alignItems: 'center',
     justifyContent: 'center',
   },
   quickActionText: {
     fontSize: 14,
-    fontWeight: '500' as const,
+    fontWeight: '600' as const,
     color: Colors.text,
-    textAlign: 'center',
+    flex: 1,
   },
   section: {
     paddingHorizontal: 24,
-    marginBottom: 24,
+    marginBottom: 32,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -411,52 +394,36 @@ const styles = StyleSheet.create({
     color: Colors.text,
     opacity: 0.6,
   },
-  aiBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.text,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    gap: 4,
-  },
-  aiBadgeText: {
-    fontSize: 11,
-    fontWeight: '600' as const,
-    color: Colors.background,
-  },
   policyCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.backgroundSecondary,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     gap: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
   policyInfo: {
     flex: 1,
   },
   policyName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600' as const,
     color: Colors.text,
     marginBottom: 4,
   },
   policyInsurer: {
-    fontSize: 14,
+    fontSize: 13,
     color: Colors.textSecondary,
   },
   policyValues: {
     alignItems: 'flex-end',
-    gap: 4,
   },
   policyValue: {
     fontSize: 16,
-    fontWeight: '600' as const,
+    fontWeight: '700' as const,
     color: Colors.text,
+    marginBottom: 4,
   },
   policyRendite: {
     flexDirection: 'row',
@@ -464,43 +431,43 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   policyRenditeText: {
-    fontSize: 14,
-    fontWeight: '500' as const,
+    fontSize: 13,
+    fontWeight: '600' as const,
     color: Colors.text,
   },
   emptyText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
     textAlign: 'center',
-    paddingVertical: 20,
+    color: Colors.textSecondary,
+    fontSize: 14,
+    marginTop: 8,
   },
-  insightCard: {
-    backgroundColor: Colors.background,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  insightHeader: {
+  aiBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
+    backgroundColor: Colors.text,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 4,
+  },
+  aiBadgeText: {
+    fontSize: 10,
+    fontWeight: '600' as const,
+    color: Colors.background,
+  },
+  insightCard: {
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: 12,
+    padding: 16,
+  },
+  insightText: {
+    fontSize: 14,
+    color: Colors.text,
+    lineHeight: 22,
   },
   insightDate: {
     fontSize: 12,
     color: Colors.textSecondary,
-    fontWeight: '500' as const,
-  },
-  insightText: {
-    fontSize: 15,
-    lineHeight: 24,
-    color: Colors.text,
-  },
-  insightLoading: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    marginTop: 8,
+    marginTop: 12,
   },
 });
