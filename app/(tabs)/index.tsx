@@ -56,7 +56,7 @@ export default function DashboardScreen() {
         return mockPolicies;
       }
       try {
-        const apiPolicies = await fetchUserPolicies(userId);
+        const apiPolicies = await fetchUserPolicies();
         
         // Ensure result is an array
         if (!Array.isArray(apiPolicies)) {

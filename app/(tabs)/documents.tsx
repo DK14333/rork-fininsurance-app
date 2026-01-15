@@ -51,7 +51,7 @@ export default function DocumentsScreen() {
       }
       try {
         console.log('Fetching documents from API for user:', userId);
-        const apiDocuments = await fetchUserDocuments(userId);
+        const apiDocuments = await fetchUserDocuments();
         
         if (!apiDocuments || !Array.isArray(apiDocuments)) {
             console.log('[Documents] No documents returned or invalid format');

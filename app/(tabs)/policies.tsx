@@ -53,7 +53,7 @@ export default function PoliciesScreen() {
       }
       try {
         console.log('Fetching policies from API for user:', userId);
-        const apiPolicies = await fetchUserPolicies(userId);
+        const apiPolicies = await fetchUserPolicies();
         
         if (!apiPolicies || apiPolicies.length === 0) {
             console.log('[Policies] No policies returned from API for user:', userId);

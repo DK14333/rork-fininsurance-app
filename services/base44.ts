@@ -1,19 +1,13 @@
-import { supabase } from './supabase';
+// services/base44.ts
 import { User, Policy, Document } from '@/types';
+import { supabase } from './supabase';
 
-// Deprecated token management - Supabase handles this
-export const saveToken = async (token: string): Promise<void> => {
-  // No-op: Supabase manages session
-  console.log('saveToken called - Supabase manages session automatically');
-};
+// Base44 Backend URL - wird von deiner .env geladen
+const BASE44_API_URL = process.env.EXPO_PUBLIC_BASE44_API_URL || 'https://rosenfeld-consulting.base44.dev/functions';
 
 export const getToken = async (): Promise<string | null> => {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token || null;
-};
-
-export const removeToken = async (): Promise<void> => {
-  await supabase.auth.signOut();
 };
 
 export const getUserId = async (): Promise<string | null> => {
@@ -21,97 +15,104 @@ export const getUserId = async (): Promise<string | null> => {
   return data.user?.id || null;
 };
 
-// Data fetching using Supabase
+export const fetchCurrentUser = async (): Promise<any> => {
+  const token = await getToken();
+  if (!token) throw new Error('Nicht authentifiziert');
 
-export const fetchCurrentUser = async (userId: string): Promise<any> => {
-  console.log('Fetching user with ID:', userId);
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', userId)
-    .single();
+  const response = await fetch(`${BASE44_API_URL}/api_getUser`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    }
+  });
 
-  if (error) {
-    console.error('Error fetching user:', error);
-    throw error;
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Fehler beim Abrufen des Benutzers');
   }
-  return data;
+
+  return await response.json();
 };
 
-export const fetchUserPolicies = async (userId: string): Promise<any[]> => {
-  console.log('Fetching policies for user via RPC:', userId);
+export const fetchUserPolicies = async (): Promise<any[]> => {
+  const token = await getToken();
+  if (!token) {
+    console.log('Kein Token vorhanden');
+    return [];
+  }
+
   try {
-    // Use Base44 backend function api_getUserPolicies instead of direct table access
-    const { data, error } = await supabase
-      .rpc('api_getUserPolicies', { user_id: userId });
-
-    if (error) {
-      console.error('Supabase RPC api_getUserPolicies Error:', JSON.stringify(error));
-      
-      // Fallback to table only if RPC fails, but log it clearly
-      console.log('Falling back to direct table query (policies)...');
-      const { data: tableData, error: tableError } = await supabase
-        .from('policies')
-        .select('*')
-        .eq('user_id', userId);
-        
-      if (tableError) return [];
-      return tableData || [];
-    }
+    console.log('Rufe Base44 Backend api_getUserPolicies auf...');
     
-    if (!data || data.length === 0) {
-       console.log('No policies found for user via RPC:', userId);
-    } else {
-       console.log(`Found ${data.length} policies for user ${userId} via RPC`);
+    const response = await fetch(`${BASE44_API_URL}/api_getUserPolicies`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Base44 API Error:', error);
+      throw new Error(error.error || 'Fehler beim Abrufen der Policen');
     }
 
+    const data = await response.json();
+    console.log(`Erfolgreich ${data?.length || 0} Policen abgerufen`);
     return data || [];
-  } catch (e) {
-    console.error('Unexpected error in fetchUserPolicies:', e);
+    
+  } catch (error) {
+    console.error('Fehler:', error);
     return [];
   }
 };
 
 export const fetchPolicy = async (policyId: string): Promise<any> => {
-  console.log('Fetching policy:', policyId);
-  const { data, error } = await supabase
-    .from('policies')
-    .select('*')
-    .eq('id', policyId)
-    .single();
+  const token = await getToken();
+  if (!token) throw new Error('Nicht authentifiziert');
 
-  if (error) {
-    console.error('Error fetching policy:', error);
-    throw error;
+  const response = await fetch(`${BASE44_API_URL}/api_getPolicy`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ policy_id: policyId })
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Fehler');
   }
-  return data;
+
+  return await response.json();
 };
 
-export const fetchUserDocuments = async (userId: string): Promise<any[]> => {
-  console.log('Fetching documents for user via RPC:', userId);
-  // Try RPC api_getUserDocuments
-  const { data, error } = await supabase
-    .rpc('api_getUserDocuments', { user_id: userId });
+export const fetchUserDocuments = async (): Promise<any[]> => {
+  const token = await getToken();
+  if (!token) return [];
 
-  if (error) {
-    console.warn('RPC api_getUserDocuments failed, falling back to table:', error.message);
-    const { data: tableData, error: tableError } = await supabase
-      .from('documents')
-      .select('*')
-      .eq('user_id', userId);
+  try {
+    const response = await fetch(`${BASE44_API_URL}/api_getUserDocuments`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
-    if (tableError) {
-      console.error('Error fetching documents:', tableError);
-      return [];
-    }
-    return tableData || [];
+    if (!response.ok) return [];
+    return await response.json() || [];
+    
+  } catch (error) {
+    console.error('Fehler:', error);
+    return [];
   }
-  
-  return data || [];
 };
 
 export const mapApiUserToUser = (apiUser: any): User => {
-  // Handle both snake_case (DB) and camelCase
   return {
     id: apiUser.id || apiUser.user_id,
     name: apiUser.name || apiUser.full_name || 'Benutzer',
@@ -128,80 +129,19 @@ export const mapApiUserToUser = (apiUser: any): User => {
 };
 
 export const mapApiPolicyToPolicy = (apiPolicy: any): Policy => {
-  // Log policy data to help debug missing values
-  if (__DEV__) {
-    // console.log('Mapping policy:', JSON.stringify(apiPolicy, null, 2));
-  }
-
-  // Helper to find value case-insensitively or via common aliases
-  const getVal = (obj: any, keys: string[]) => {
-    for (const key of keys) {
-      if (obj[key] !== undefined && obj[key] !== null) return obj[key];
-      // Try snake_case
-      const snake = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
-      if (obj[snake] !== undefined && obj[snake] !== null) return obj[snake];
-      // Try lowercase
-      const lower = key.toLowerCase();
-      if (obj[lower] !== undefined && obj[lower] !== null) return obj[lower];
-    }
-    return undefined;
-  };
-
-  const parseNumber = (val: any): number => {
-    if (val === undefined || val === null) return 0;
-    if (typeof val === 'number') return val;
-    if (typeof val === 'string') {
-      let clean = val.replace(/[^\d.,-]/g, ''); // Keep digits, dots, commas, minus
-      if (!clean) return 0;
-      
-      // Check for German format (1.000,00) vs US format (1,000.00)
-      // Heuristic: look at last separator
-      const lastDotIndex = clean.lastIndexOf('.');
-      const lastCommaIndex = clean.lastIndexOf(',');
-      
-      if (lastCommaIndex > lastDotIndex) {
-         // Likely German: 1.000,00 -> remove dots, replace comma with dot
-         clean = clean.replace(/\./g, '').replace(',', '.');
-      } else if (lastDotIndex > lastCommaIndex) {
-         // Likely US: 1,000.00 -> remove commas
-         clean = clean.replace(/,/g, '');
-      } else {
-         // Only one separator or none
-         // If comma, treat as decimal separator (German/EU standard usually preferred in this context)
-         if (clean.includes(',')) {
-            clean = clean.replace(',', '.');
-         }
-      }
-      
-      const num = parseFloat(clean);
-      return isNaN(num) ? 0 : num;
-    }
-    return 0;
-  };
-
-  const depotwert = parseNumber(getVal(apiPolicy, [
-      'depotwert', 'portfolioValue', 'portfolio_value', 'policenwert', 'value', 'current_value', 'investments', 'kapital',
-      'market_value', 'marketValue', 'nav', 'net_asset_value', 'account_value', 'account_balance', 'balance', 'saldo', 'investment_value',
-      'investmentsumme', 'investment_sum', 'gesamtwert', 'total_value', 'contract_value', 'rueckkaufswert'
-    ]));
-    
-  if (depotwert === 0 && __DEV__) {
-      // console.log('Warning: Depotwert is 0 for policy:', apiPolicy.id, 'Available keys:', Object.keys(apiPolicy));
-  }
-
   return {
     id: apiPolicy.id,
-    userId: apiPolicy.user_id || apiPolicy.userId,
-    versicherer: getVal(apiPolicy, ['versicherer', 'insurer', 'company', 'gesellschaft']) || 'Unbekannt',
-    produkt: getVal(apiPolicy, ['produkt', 'product', 'name', 'title', 'tarif', 'plan']) || 'Police',
-    monatsbeitrag: parseNumber(getVal(apiPolicy, ['monatsbeitrag', 'monthlyContribution', 'monthly_contribution', 'beitrag', 'amount', 'premium', 'rate'])),
-    depotwert,
-    rendite: parseNumber(getVal(apiPolicy, ['rendite', 'performance', 'profit', 'gewinn', 'return', 'interest'])),
-    performanceHistorie: getVal(apiPolicy, ['performanceHistorie', 'performance_historie', 'history']) || [],
-    kategorie: getVal(apiPolicy, ['kategorie', 'category', 'type', 'sparte']) || 'Sach',
-    vertragsbeginn: getVal(apiPolicy, ['vertragsbeginn', 'startDate', 'start_date', 'beginn', 'inception_date']),
-    vertragsnummer: getVal(apiPolicy, ['vertragsnummer', 'contractNumber', 'contract_number', 'nummer', 'policy_number', 'scheinnummer']),
-    etfAllokation: getVal(apiPolicy, ['etfAllokation', 'etf_allokation', 'allocation', 'funds']) || [],
+    userId: apiPolicy.userId,
+    versicherer: apiPolicy.versicherer || 'Unbekannt',
+    produkt: apiPolicy.produkt || 'Police',
+    monatsbeitrag: apiPolicy.monatsbeitrag || 0,
+    depotwert: apiPolicy.depotwert || 0,
+    rendite: apiPolicy.rendite || 0,
+    performanceHistorie: apiPolicy.performanceHistorie || [],
+    kategorie: apiPolicy.kategorie || 'Sonstiges',
+    vertragsbeginn: apiPolicy.vertragsbeginn,
+    vertragsnummer: apiPolicy.vertragsnummer,
+    etfAllokation: apiPolicy.etfAllokation || [],
   };
 };
 
@@ -211,19 +151,10 @@ export const mapApiDocumentToDocument = (apiDoc: any): Document => {
     userId: apiDoc.user_id || apiDoc.userId,
     titel: apiDoc.titel || apiDoc.title,
     url: apiDoc.url,
-    kategorie: apiDoc.kategorie || apiDoc.category || 'Sonstiges',
+    kategorie: apiDoc.kategorie || 'Sonstiges',
     datum: apiDoc.datum || apiDoc.created_at,
-    policyId: apiDoc.policy_id || apiDoc.policyId,
+    policyId: apiDoc.policy_id,
   };
-};
-
-// Deprecated functions kept for compatibility
-export const extractTokenFromUrl = (url: string): string | null => null;
-export const openBase44Login = async (): Promise<any> => ({ type: 'cancel' });
-export const saveUserId = async (id: string) => {};
-export const removeUserId = async () => {};
-export const loginWithCredentials = async (email: string) => {
-    throw new Error('Use Supabase Auth instead');
 };
 
 export const BASE44_API = {
