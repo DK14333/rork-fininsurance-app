@@ -23,28 +23,22 @@ const categories = ['Alle', 'Rente', 'Fonds', 'Leben', 'Kranken', 'Sach'];
 export default function PoliciesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Alle');
-  const { user, isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuth();
 
   const { data: policies = [], isLoading, error, refetch, isRefetching } = useQuery({
-    queryKey: ['policies', user?.id, isAuthenticated],
+    queryKey: ['policies', isAuthenticated],
     queryFn: async () => {
-      if (!isAuthenticated) {
-        console.log('Nicht authentifiziert');
-        return [];
-      }
-
+      if (!isAuthenticated) return [];
+      
       try {
-        console.log('Fetching policies from API...');
         const apiPolicies = await fetchUserPolicies();
-
-        if (!apiPolicies || apiPolicies.length === 0) {
-          console.log('No policies returned from API');
+        if (!Array.isArray(apiPolicies)) {
+          console.error('fetchUserPolicies returned non-array');
           return [];
         }
-
         return apiPolicies.map(mapApiPolicyToPolicy);
       } catch (err) {
-        console.error('Error in policies queryFn:', err);
+        console.error('Error fetching policies:', err);
         throw err;
       }
     },
@@ -301,12 +295,10 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
   policyCard: {
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.backgroundSecondary,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
   policyHeader: {
     flexDirection: 'row',
@@ -315,14 +307,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   categoryBadge: {
-    backgroundColor: Colors.backgroundSecondary,
+    backgroundColor: Colors.background,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
   },
   categoryBadgeText: {
     fontSize: 12,
-    fontWeight: '500' as const,
+    fontWeight: '600' as const,
     color: Colors.text,
   },
   contractNumber: {
@@ -355,47 +347,45 @@ const styles = StyleSheet.create({
   },
   policyValue: {
     fontSize: 18,
-    fontWeight: '600' as const,
+    fontWeight: '700' as const,
     color: Colors.text,
   },
   renditeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.backgroundSecondary,
+    backgroundColor: Colors.background,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
+    gap: 4,
     marginRight: 8,
   },
   renditeText: {
-    fontSize: 14,
-    fontWeight: '500' as const,
+    fontSize: 13,
+    fontWeight: '600' as const,
     color: Colors.text,
   },
   loadingState: {
-    alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 60,
+    alignItems: 'center',
   },
   loadingText: {
-    marginTop: 12,
+    marginTop: 16,
     fontSize: 14,
     color: Colors.textSecondary,
   },
   errorState: {
-    alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 60,
+    alignItems: 'center',
   },
   errorText: {
     marginTop: 16,
     fontSize: 16,
-    fontWeight: '500' as const,
-    color: Colors.textSecondary,
+    fontWeight: '600' as const,
+    color: Colors.text,
   },
   retryButton: {
-    marginTop: 20,
+    marginTop: 16,
     backgroundColor: Colors.text,
     paddingHorizontal: 24,
     paddingVertical: 12,
@@ -407,8 +397,7 @@ const styles = StyleSheet.create({
     color: Colors.background,
   },
   emptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 60,
+    alignItems: 'center',
   },
 });
