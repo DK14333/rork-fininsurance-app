@@ -127,9 +127,12 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       setTempEmail(email);
       await AsyncStorage.setItem(TEMP_EMAIL_KEY, email);
 
+      // Use the custom scheme defined in app.json
       const redirectTo = 'rork-app://auth-callback';
       
-      const { error } = await supabase.auth.signInWithOtp({
+      console.log('Attempting login with:', email, 'Redirect to:', redirectTo);
+
+      const { data, error } = await supabase.auth.signInWithOtp({
         email,
         options: {
           emailRedirectTo: redirectTo,
@@ -137,7 +140,12 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase signInWithOtp error:', error);
+        throw error;
+      }
+      
+      console.log('Supabase login initiated, data:', data);
       
       // Return 'check_email' to indicate magic link was sent
       return 'check_email';
@@ -246,6 +254,56 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   // Provide a way to get the temp user/email for UI
   const tempUser = tempEmail ? { email: tempEmail } as any : null;
 
+  const setupPhone = useCallback(async (phoneNumber: string) => {
+    try {
+      // Updates the user's phone number. This triggers an SMS OTP to the new number.
+      const { error } = await supabase.auth.updateUser({
+        phone: phoneNumber,
+      });
+
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Setup phone error:', error);
+      throw error;
+    }
+  }, []);
+
+  const sendPhoneOTP = useCallback(async (phoneNumber: string) => {
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        phone: phoneNumber,
+      });
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Send Phone OTP error:', error);
+      throw error;
+    }
+  }, []);
+
+  const verifyPhoneOTP = useCallback(async (token: string, phoneNumber: string, type: 'sms' | 'phone_change' = 'sms') => {
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        phone: phoneNumber,
+        token,
+        type,
+      });
+
+      if (error) throw error;
+      
+      if (data.session) {
+        setSession(data.session);
+        await refreshUserData(data.session.user.id);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Verify Phone OTP error:', error);
+      throw error;
+    }
+  }, [refreshUserData]);
+
   return {
     user,
     session,
@@ -259,6 +317,9 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     handleAuthCallback,
     logout,
     updateUser,
+    setupPhone,
+    sendPhoneOTP,
+    verifyPhoneOTP,
     refreshUser: async () => {
         if (session?.user?.id) await refreshUserData(session.user.id);
     },

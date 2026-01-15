@@ -23,6 +23,9 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="register" options={{ headerShown: false }} />
+        <Stack.Screen name="verify-2fa" options={{ headerShown: false }} />
+        <Stack.Screen name="setup-phone" options={{ headerShown: false }} />
+        <Stack.Screen name="verify-sms" options={{ headerShown: false }} />
         <Stack.Screen name="auth-callback" options={{ headerShown: false }} />
         <Stack.Screen 
           name="policy/[id]" 

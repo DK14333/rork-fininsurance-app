@@ -100,19 +100,38 @@ export const mapApiUserToUser = (apiUser: any): User => {
 };
 
 export const mapApiPolicyToPolicy = (apiPolicy: any): Policy => {
+  // Log policy data to help debug missing values
+  if (__DEV__) {
+    console.log('Mapping policy:', JSON.stringify(apiPolicy, null, 2));
+  }
+
+  // Helper to find value case-insensitively or via common aliases
+  const getVal = (obj: any, keys: string[]) => {
+    for (const key of keys) {
+      if (obj[key] !== undefined && obj[key] !== null) return obj[key];
+      // Try snake_case
+      const snake = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      if (obj[snake] !== undefined && obj[snake] !== null) return obj[snake];
+      // Try lowercase
+      const lower = key.toLowerCase();
+      if (obj[lower] !== undefined && obj[lower] !== null) return obj[lower];
+    }
+    return undefined;
+  };
+
   return {
     id: apiPolicy.id,
     userId: apiPolicy.user_id || apiPolicy.userId,
-    versicherer: apiPolicy.versicherer || apiPolicy.insurer,
-    produkt: apiPolicy.produkt || apiPolicy.product,
-    monatsbeitrag: apiPolicy.monatsbeitrag || apiPolicy.monthly_contribution || 0,
-    depotwert: apiPolicy.depotwert || apiPolicy.portfolio_value || 0,
-    rendite: apiPolicy.rendite || apiPolicy.performance || 0,
-    performanceHistorie: apiPolicy.performance_historie || apiPolicy.performanceHistorie || [],
-    kategorie: apiPolicy.kategorie || apiPolicy.category || 'Sach',
-    vertragsbeginn: apiPolicy.vertragsbeginn || apiPolicy.start_date,
-    vertragsnummer: apiPolicy.vertragsnummer || apiPolicy.contract_number,
-    etfAllokation: apiPolicy.etf_allokation || apiPolicy.etfAllokation || [],
+    versicherer: getVal(apiPolicy, ['versicherer', 'insurer', 'company']) || 'Unbekannt',
+    produkt: getVal(apiPolicy, ['produkt', 'product', 'name', 'title']) || 'Police',
+    monatsbeitrag: Number(getVal(apiPolicy, ['monatsbeitrag', 'monthlyContribution', 'monthly_contribution', 'beitrag', 'amount']) || 0),
+    depotwert: Number(getVal(apiPolicy, ['depotwert', 'portfolioValue', 'portfolio_value', 'policenwert', 'value', 'current_value', 'investments', 'kapital']) || 0),
+    rendite: Number(getVal(apiPolicy, ['rendite', 'performance', 'profit', 'gewinn']) || 0),
+    performanceHistorie: getVal(apiPolicy, ['performanceHistorie', 'performance_historie', 'history']) || [],
+    kategorie: getVal(apiPolicy, ['kategorie', 'category', 'type']) || 'Sach',
+    vertragsbeginn: getVal(apiPolicy, ['vertragsbeginn', 'startDate', 'start_date', 'beginn']),
+    vertragsnummer: getVal(apiPolicy, ['vertragsnummer', 'contractNumber', 'contract_number', 'nummer']),
+    etfAllokation: getVal(apiPolicy, ['etfAllokation', 'etf_allokation', 'allocation']) || [],
   };
 };
 

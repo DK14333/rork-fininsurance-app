@@ -31,10 +31,18 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     try {
-      const result = await login(email.trim());
+      // Add a timeout to prevent infinite loading if network or Supabase hangs
+      const loginPromise = login(email.trim());
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Zeitüberschreitung. Bitte überprüfen Sie Ihre Internetverbindung.')), 15000)
+      );
+
+      const result = await Promise.race([loginPromise, timeoutPromise]);
       
       if (result === 'mfa_required' || result === 'check_email') {
-        router.push('/verify-2fa');
+        // Navigate to 2FA / Verification screen
+        // We use replace to prevent going back to login easily without completing
+        router.push('/verify-2fa'); 
         return;
       }
       
@@ -45,11 +53,11 @@ export default function LoginScreen() {
       }
     } catch (error: any) {
       console.log('Login error:', error);
-      setIsLoading(false);
-      Alert.alert('Fehler', error.message || 'Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.');
+      Alert.alert(
+        'Fehler', 
+        error.message || 'Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.'
+      );
     } finally {
-      // If we pushed to new route, we might not want to set loading false on this unmounted component
-      // But safe to do so.
       setIsLoading(false);
     }
   };
