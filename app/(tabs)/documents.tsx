@@ -16,8 +16,9 @@ import { Search, FileText, Calendar, ExternalLink, AlertCircle, Clock } from 'lu
 import { useQuery } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { Document } from '@/types';
+import { mockDocuments } from '@/mocks/documents';
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchUserDocuments, mapApiDocumentToDocument } from '@/services/base44';
+import { fetchUserDocuments, mapApiDocumentToDocument, getUserId } from '@/services/base44';
 
 const categories = ['Alle', 'Vertrag', 'Rechnung', 'Bescheinigung', 'Sonstiges'];
 
@@ -29,18 +30,32 @@ export default function DocumentsScreen() {
   const { data: documents = [], isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ['documents', user?.id, isAuthenticated],
     queryFn: async () => {
-      if (!isAuthenticated) {
-        console.log('Nicht authentifiziert');
-        return [];
+      let userId = user?.id || await getUserId();
+
+      // If we are authenticated but have no userId, return empty to avoid leaking mock data
+      if (isAuthenticated && !userId) {
+         // Try to get userId again?
+         const storedId = await getUserId();
+         if (storedId) {
+             userId = storedId;
+         } else {
+             return [];
+         }
       }
 
+      if (!userId) {
+        console.log('No user ID available, using mock data');
+        // If authenticated, do NOT use mock data
+        if (isAuthenticated) return [];
+        return mockDocuments;
+      }
       try {
-        console.log('Fetching documents from API...');
+        console.log('Fetching documents from API for user:', userId);
         const apiDocuments = await fetchUserDocuments();
-
+        
         if (!apiDocuments || !Array.isArray(apiDocuments)) {
-          console.log('No documents returned or invalid format');
-          return [];
+            console.log('[Documents] No documents returned or invalid format');
+            return [];
         }
 
         return apiDocuments.map(mapApiDocumentToDocument);
@@ -49,7 +64,7 @@ export default function DocumentsScreen() {
         throw err;
       }
     },
-    enabled: !!isAuthenticated,
+    enabled: true,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -299,13 +314,13 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.backgroundSecondary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 14,
   },
   documentInfo: {
     flex: 1,
   },
   documentTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '500' as const,
     color: Colors.text,
     marginBottom: 8,
@@ -313,18 +328,18 @@ const styles = StyleSheet.create({
   documentMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
   categoryBadge: {
-    backgroundColor: Colors.backgroundSecondary,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 6,
+    backgroundColor: Colors.backgroundSecondary,
   },
   categoryBadgeText: {
     fontSize: 11,
     fontWeight: '500' as const,
-    color: Colors.text,
+    color: Colors.textSecondary,
   },
   dateBadge: {
     flexDirection: 'row',
@@ -336,50 +351,50 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
   },
   downloadButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 10,
     backgroundColor: Colors.backgroundSecondary,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 8,
   },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 60,
+    gap: 16,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+  },
   loadingState: {
     alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 60,
+    gap: 16,
   },
   loadingText: {
-    marginTop: 12,
-    fontSize: 14,
+    fontSize: 16,
     color: Colors.textSecondary,
   },
   errorState: {
     alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 60,
+    gap: 16,
   },
   errorText: {
-    marginTop: 16,
     fontSize: 16,
-    fontWeight: '500' as const,
     color: Colors.textSecondary,
   },
   retryButton: {
-    marginTop: 20,
-    backgroundColor: Colors.text,
     paddingHorizontal: 24,
     paddingVertical: 12,
+    backgroundColor: Colors.text,
     borderRadius: 8,
   },
   retryButtonText: {
     fontSize: 14,
     fontWeight: '600' as const,
     color: Colors.background,
-  },
-  emptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
   },
 });
