@@ -24,28 +24,22 @@ const categories = ['Alle', 'Vertrag', 'Rechnung', 'Bescheinigung', 'Sonstiges']
 export default function DocumentsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Alle');
-  const { user, isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuth();
 
   const { data: documents = [], isLoading, error, refetch, isRefetching } = useQuery({
-    queryKey: ['documents', user?.id, isAuthenticated],
+    queryKey: ['documents', isAuthenticated],
     queryFn: async () => {
-      if (!isAuthenticated) {
-        console.log('Nicht authentifiziert');
-        return [];
-      }
-
+      if (!isAuthenticated) return [];
+      
       try {
-        console.log('Fetching documents from API...');
         const apiDocuments = await fetchUserDocuments();
-        
-        if (!apiDocuments || !Array.isArray(apiDocuments)) {
-          console.log('[Documents] No documents returned or invalid format');
+        if (!Array.isArray(apiDocuments)) {
+          console.error('fetchUserDocuments returned non-array');
           return [];
         }
-
         return apiDocuments.map(mapApiDocumentToDocument);
       } catch (err) {
-        console.log('Error fetching documents:', err);
+        console.error('Error fetching documents:', err);
         throw err;
       }
     },
@@ -299,32 +293,32 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.backgroundSecondary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    marginRight: 12,
   },
   documentInfo: {
     flex: 1,
   },
   documentTitle: {
     fontSize: 15,
-    fontWeight: '500' as const,
+    fontWeight: '600' as const,
     color: Colors.text,
     marginBottom: 8,
   },
   documentMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   categoryBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
     backgroundColor: Colors.backgroundSecondary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
   categoryBadgeText: {
     fontSize: 11,
-    fontWeight: '500' as const,
-    color: Colors.textSecondary,
+    fontWeight: '600' as const,
+    color: Colors.text,
   },
   dateBadge: {
     flexDirection: 'row',
@@ -336,50 +330,41 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
   },
   downloadButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: Colors.backgroundSecondary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 60,
-    gap: 16,
-  },
-  emptyStateText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
+    padding: 8,
   },
   loadingState: {
-    alignItems: 'center',
     paddingVertical: 60,
-    gap: 16,
+    alignItems: 'center',
   },
   loadingText: {
-    fontSize: 16,
+    marginTop: 16,
+    fontSize: 14,
     color: Colors.textSecondary,
   },
   errorState: {
-    alignItems: 'center',
     paddingVertical: 60,
-    gap: 16,
+    alignItems: 'center',
   },
   errorText: {
+    marginTop: 16,
     fontSize: 16,
-    color: Colors.textSecondary,
+    fontWeight: '600' as const,
+    color: Colors.text,
   },
   retryButton: {
+    marginTop: 16,
+    backgroundColor: Colors.text,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: Colors.text,
     borderRadius: 8,
   },
   retryButtonText: {
     fontSize: 14,
     fontWeight: '600' as const,
     color: Colors.background,
+  },
+  emptyState: {
+    paddingVertical: 60,
+    alignItems: 'center',
   },
 });
