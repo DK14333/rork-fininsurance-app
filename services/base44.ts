@@ -2,7 +2,6 @@
 import { User, Policy, Document } from '@/types';
 import { supabase } from './supabase';
 
-// Base44 Backend URL - wird von deiner .env geladen
 const BASE44_API_URL = process.env.EXPO_PUBLIC_BASE44_API_URL || 'https://rosenfeld-consulting.base44.dev/functions';
 
 export const getToken = async (): Promise<string | null> => {
