@@ -337,13 +337,13 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   codeInput: {
-    width: 36,
+    width: 32, // Reduced from 36 to fit 8 digits better
     height: 48,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.border,
     textAlign: 'center',
-    fontSize: 20,
+    fontSize: 18, // Reduced font size slightly
     fontWeight: '600',
     color: Colors.text,
     backgroundColor: Colors.background,

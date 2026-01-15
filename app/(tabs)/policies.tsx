@@ -56,14 +56,13 @@ export default function PoliciesScreen() {
         const apiPolicies = await fetchUserPolicies(userId);
         
         if (!apiPolicies || apiPolicies.length === 0) {
-            console.log('[Policies] No policies returned from API');
+            console.log('[Policies] No policies returned from API for user:', userId);
             return [];
         }
         
         return apiPolicies.map(mapApiPolicyToPolicy);
       } catch (err) {
-        console.log('Error fetching policies:', err);
-        // Do not fallback to mock data on error for real users
+        console.error('Error in policies queryFn:', err);
         throw err;
       }
     },
@@ -107,7 +106,7 @@ export default function PoliciesScreen() {
       <Text style={styles.policyInsurer}>{item.versicherer}</Text>
       <View style={styles.policyFooter}>
         <View style={styles.policyValues}>
-          {item.depotwert > 0 ? (
+          {item.depotwert > 0 || ['Fonds', 'Rente', 'Leben', 'Invest'].includes(item.kategorie) ? (
             <>
               <Text style={styles.policyValueLabel}>Investment</Text>
               <Text style={styles.policyValue}>{formatCurrency(item.depotwert)}</Text>

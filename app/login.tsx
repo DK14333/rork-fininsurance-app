@@ -19,37 +19,47 @@ import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('');
+  const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
 
   const handleLogin = async () => {
-    if (!email.trim()) {
-      Alert.alert('Fehler', 'Bitte geben Sie Ihre E-Mail-Adresse ein.');
+    if (!input.trim()) {
+      Alert.alert('Fehler', 'Bitte geben Sie Ihre E-Mail-Adresse oder Handynummer ein.');
       return;
     }
 
     setIsLoading(true);
     try {
       // Add a timeout to prevent infinite loading if network or Supabase hangs
-      const loginPromise = login(email.trim());
+      const loginPromise = login(input.trim());
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Zeitüberschreitung. Bitte überprüfen Sie Ihre Internetverbindung.')), 15000)
       );
 
       const result = await Promise.race([loginPromise, timeoutPromise]);
       
-      if (result === 'mfa_required' || result === 'check_email') {
-        // Navigate to 2FA / Verification screen
-        // We use replace to prevent going back to login easily without completing
+      if (result === 'check_email') {
+        // Navigate to 2FA / Verification screen for Email
         router.push('/verify-2fa'); 
+        return;
+      }
+
+      if (result === 'check_phone') {
+        // Navigate to SMS Verification
+        // Clean phone number for params
+        const phone = input.trim().replace(/\s/g, '');
+        router.push({
+            pathname: '/verify-sms',
+            params: { phone, type: 'sms' }
+        });
         return;
       }
       
       if (result) {
         router.replace('/(tabs)');
       } else {
-        Alert.alert('Fehler', 'Login fehlgeschlagen. Bitte überprüfen Sie Ihre E-Mail-Adresse.');
+        Alert.alert('Fehler', 'Login fehlgeschlagen. Bitte überprüfen Sie Ihre Eingabe.');
       }
     } catch (error: any) {
       console.log('Login error:', error);
@@ -88,16 +98,16 @@ export default function LoginScreen() {
               </View>
 
               <View style={styles.formContainer}>
-                <View style={styles.inputContainer}>
+                  <View style={styles.inputContainer}>
                   <View style={styles.inputIconContainer}>
                     <Mail size={20} color={Colors.textTertiary} strokeWidth={1.5} />
                   </View>
                   <TextInput
                     style={styles.input}
-                    placeholder="E-Mail-Adresse"
+                    placeholder="E-Mail oder Handynummer"
                     placeholderTextColor={Colors.textTertiary}
-                    value={email}
-                    onChangeText={setEmail}
+                    value={input}
+                    onChangeText={setInput}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}

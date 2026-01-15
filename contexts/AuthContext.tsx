@@ -122,33 +122,57 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     };
   }, [refreshUserData]);
 
-  const login = useCallback(async (email: string) => {
+  const login = useCallback(async (input: string) => {
     try {
-      setTempEmail(email);
-      await AsyncStorage.setItem(TEMP_EMAIL_KEY, email);
-
-      // Use the custom scheme defined in app.json
-      const redirectTo = 'rork-app://auth-callback';
+      // Determine if input is email or phone
+      const isEmail = input.includes('@');
       
-      console.log('Attempting login with:', email, 'Redirect to:', redirectTo);
-
-      const { data, error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: redirectTo,
-          shouldCreateUser: true,
-        },
-      });
-
-      if (error) {
-        console.error('Supabase signInWithOtp error:', error);
-        throw error;
+      if (isEmail) {
+          setTempEmail(input);
+          await AsyncStorage.setItem(TEMP_EMAIL_KEY, input);
+    
+          // Use the custom scheme defined in app.json
+          const redirectTo = 'rork-app://auth-callback';
+          
+          console.log('Attempting login with email:', input, 'Redirect to:', redirectTo);
+    
+          const { data, error } = await supabase.auth.signInWithOtp({
+            email: input,
+            options: {
+              emailRedirectTo: redirectTo,
+              shouldCreateUser: true,
+            },
+          });
+    
+          if (error) {
+            console.error('Supabase signInWithOtp (email) error:', error);
+            throw error;
+          }
+          
+          console.log('Supabase login initiated, data:', data);
+          
+          // Return 'check_email' to indicate magic link/code was sent
+          return 'check_email';
+      } else {
+          // Phone login
+          // Basic formatting: ensure it starts with + if it looks like a mobile number
+          // We assume user enters full number or we might need to handle it.
+          // For now, pass as is, but maybe clean spaces.
+          const phone = input.replace(/\s/g, '');
+          
+          console.log('Attempting login with phone:', phone);
+          
+          const { error } = await supabase.auth.signInWithOtp({
+              phone: phone,
+          });
+          
+          if (error) {
+              console.error('Supabase signInWithOtp (phone) error:', error);
+              throw error;
+          }
+          
+          return 'check_phone';
       }
-      
-      console.log('Supabase login initiated, data:', data);
-      
-      // Return 'check_email' to indicate magic link was sent
-      return 'check_email';
     } catch (error) {
       console.error('Login error:', error);
       throw error;
