@@ -39,22 +39,30 @@ export const fetchCurrentUser = async (userId: string): Promise<any> => {
 };
 
 export const fetchUserPolicies = async (userId: string): Promise<any[]> => {
-  console.log('Fetching policies for user:', userId);
+  console.log('Fetching policies for user via RPC:', userId);
   try {
+    // Use Base44 backend function api_getUserPolicies instead of direct table access
     const { data, error } = await supabase
-      .from('policies')
-      .select('*')
-      .eq('user_id', userId);
+      .rpc('api_getUserPolicies', { user_id: userId });
 
     if (error) {
-      console.error('Supabase Error fetching policies:', JSON.stringify(error));
-      return [];
+      console.error('Supabase RPC api_getUserPolicies Error:', JSON.stringify(error));
+      
+      // Fallback to table only if RPC fails, but log it clearly
+      console.log('Falling back to direct table query (policies)...');
+      const { data: tableData, error: tableError } = await supabase
+        .from('policies')
+        .select('*')
+        .eq('user_id', userId);
+        
+      if (tableError) return [];
+      return tableData || [];
     }
     
     if (!data || data.length === 0) {
-       console.log('No policies found for user:', userId);
+       console.log('No policies found for user via RPC:', userId);
     } else {
-       console.log(`Found ${data.length} policies for user ${userId}`);
+       console.log(`Found ${data.length} policies for user ${userId} via RPC`);
     }
 
     return data || [];
@@ -80,16 +88,25 @@ export const fetchPolicy = async (policyId: string): Promise<any> => {
 };
 
 export const fetchUserDocuments = async (userId: string): Promise<any[]> => {
-  console.log('Fetching documents for user:', userId);
+  console.log('Fetching documents for user via RPC:', userId);
+  // Try RPC api_getUserDocuments
   const { data, error } = await supabase
-    .from('documents')
-    .select('*')
-    .eq('user_id', userId); // Assuming user_id column
+    .rpc('api_getUserDocuments', { user_id: userId });
 
   if (error) {
-    console.error('Error fetching documents:', error);
-    return [];
+    console.warn('RPC api_getUserDocuments failed, falling back to table:', error.message);
+    const { data: tableData, error: tableError } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (tableError) {
+      console.error('Error fetching documents:', tableError);
+      return [];
+    }
+    return tableData || [];
   }
+  
   return data || [];
 };
 
