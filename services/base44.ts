@@ -1,116 +1,90 @@
-// services/base44.ts
-import { User, Policy, Document } from '@/types';
 import { supabase } from './supabase';
+import { User, Policy, Document } from '@/types';
 
 const BASE44_API_URL = process.env.EXPO_PUBLIC_BASE44_API_URL || 'https://rosenfeld-consulting.base44.dev/functions';
 
+// Token management
 export const getToken = async (): Promise<string | null> => {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token || null;
 };
 
-export const getUserId = async (): Promise<string | null> => {
-  const { data } = await supabase.auth.getUser();
-  return data.user?.id || null;
+export const removeToken = async (): Promise<void> => {
+  await supabase.auth.signOut();
 };
 
+// Fetch current user
 export const fetchCurrentUser = async (): Promise<any> => {
-  const token = await getToken();
-  if (!token) throw new Error('Nicht authentifiziert');
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) throw new Error('No authenticated user');
+  
+  const { data: userData, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', data.user.id)
+    .single();
 
-  const response = await fetch(`${BASE44_API_URL}/api_getUser`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Fehler beim Abrufen des Benutzers');
-  }
-
-  return await response.json();
+  if (error) throw error;
+  return userData;
 };
 
+// Fetch user policies via Base44 API
 export const fetchUserPolicies = async (): Promise<any[]> => {
   const token = await getToken();
-  if (!token) {
-    console.log('Kein Token vorhanden');
-    return [];
-  }
+  if (!token) throw new Error('No authentication token');
 
-  try {
-    console.log('Rufe Base44 Backend api_getUserPolicies auf...');
-    
-    const response = await fetch(`${BASE44_API_URL}/api_getUserPolicies`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      console.error('Base44 API Error:', error);
-      throw new Error(error.error || 'Fehler beim Abrufen der Policen');
-    }
-
-    const data = await response.json();
-    console.log(`Erfolgreich ${data?.length || 0} Policen abgerufen`);
-    return data || [];
-    
-  } catch (error) {
-    console.error('Fehler:', error);
-    return [];
-  }
-};
-
-export const fetchPolicy = async (policyId: string): Promise<any> => {
-  const token = await getToken();
-  if (!token) throw new Error('Nicht authentifiziert');
-
-  const response = await fetch(`${BASE44_API_URL}/api_getPolicy`, {
+  const response = await fetch(`${BASE44_API_URL}/api_getUserPolicies`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ policy_id: policyId })
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Fehler');
+    const errorData = await response.json();
+    throw new Error(errorData.error || 'Failed to fetch policies');
   }
 
-  return await response.json();
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
 };
 
+// Fetch single policy
+export const fetchPolicy = async (policyId: string): Promise<any> => {
+  const { data, error } = await supabase
+    .from('policies')
+    .select('*')
+    .eq('id', policyId)
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+// Fetch user documents via Base44 API
 export const fetchUserDocuments = async (): Promise<any[]> => {
   const token = await getToken();
-  if (!token) return [];
+  if (!token) throw new Error('No authentication token');
 
-  try {
-    const response = await fetch(`${BASE44_API_URL}/api_getUserDocuments`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
+  const response = await fetch(`${BASE44_API_URL}/api_getUserDocuments`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
 
-    if (!response.ok) return [];
-    return await response.json() || [];
-    
-  } catch (error) {
-    console.error('Fehler:', error);
-    return [];
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || 'Failed to fetch documents');
   }
+
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
 };
 
+// Mapping functions
 export const mapApiUserToUser = (apiUser: any): User => {
   return {
     id: apiUser.id || apiUser.user_id,
@@ -128,19 +102,45 @@ export const mapApiUserToUser = (apiUser: any): User => {
 };
 
 export const mapApiPolicyToPolicy = (apiPolicy: any): Policy => {
+  const parseNumber = (val: any): number => {
+    if (val === undefined || val === null) return 0;
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string') {
+      let clean = val.replace(/[^\d.,-]/g, '');
+      if (!clean) return 0;
+
+      const lastDotIndex = clean.lastIndexOf('.');
+      const lastCommaIndex = clean.lastIndexOf(',');
+
+      if (lastCommaIndex > lastDotIndex) {
+        clean = clean.replace(/\./g, '').replace(',', '.');
+      } else if (lastDotIndex > lastCommaIndex) {
+        clean = clean.replace(/,/g, '');
+      } else {
+        if (clean.includes(',')) {
+          clean = clean.replace(',', '.');
+        }
+      }
+
+      const num = parseFloat(clean);
+      return isNaN(num) ? 0 : num;
+    }
+    return 0;
+  };
+
   return {
     id: apiPolicy.id,
-    userId: apiPolicy.userId,
-    versicherer: apiPolicy.versicherer || 'Unbekannt',
-    produkt: apiPolicy.produkt || 'Police',
-    monatsbeitrag: apiPolicy.monatsbeitrag || 0,
-    depotwert: apiPolicy.depotwert || 0,
-    rendite: apiPolicy.rendite || 0,
-    performanceHistorie: apiPolicy.performanceHistorie || [],
-    kategorie: apiPolicy.kategorie || 'Sonstiges',
-    vertragsbeginn: apiPolicy.vertragsbeginn,
-    vertragsnummer: apiPolicy.vertragsnummer,
-    etfAllokation: apiPolicy.etfAllokation || [],
+    userId: apiPolicy.user_id || apiPolicy.userId,
+    versicherer: apiPolicy.versicherer || apiPolicy.anbieter || 'Unbekannt',
+    produkt: apiPolicy.produkt || apiPolicy.produktname || 'Police',
+    monatsbeitrag: parseNumber(apiPolicy.monatsbeitrag || apiPolicy.monatlicher_beitrag),
+    depotwert: parseNumber(apiPolicy.depotwert || apiPolicy.aktueller_wert),
+    rendite: parseNumber(apiPolicy.rendite || apiPolicy.rendite_prozent),
+    performanceHistorie: apiPolicy.performanceHistorie || apiPolicy.performance_historie || [],
+    kategorie: apiPolicy.kategorie || 'Sach',
+    vertragsbeginn: apiPolicy.vertragsbeginn || apiPolicy.startdatum,
+    vertragsnummer: apiPolicy.vertragsnummer || apiPolicy.id,
+    etfAllokation: apiPolicy.etfAllokation || apiPolicy.etf_allokation || [],
   };
 };
 
@@ -150,9 +150,9 @@ export const mapApiDocumentToDocument = (apiDoc: any): Document => {
     userId: apiDoc.user_id || apiDoc.userId,
     titel: apiDoc.titel || apiDoc.title,
     url: apiDoc.url,
-    kategorie: apiDoc.kategorie || 'Sonstiges',
+    kategorie: apiDoc.kategorie || apiDoc.category || 'Sonstiges',
     datum: apiDoc.datum || apiDoc.created_at,
-    policyId: apiDoc.policy_id,
+    policyId: apiDoc.policy_id || apiDoc.policyId,
   };
 };
 
@@ -161,7 +161,6 @@ export const BASE44_API = {
   getUserPolicies: fetchUserPolicies,
   getPolicy: fetchPolicy,
   getUserDocuments: fetchUserDocuments,
-  getUserId,
   mapUser: mapApiUserToUser,
   mapPolicy: mapApiPolicyToPolicy,
   mapDocument: mapApiDocumentToDocument,
