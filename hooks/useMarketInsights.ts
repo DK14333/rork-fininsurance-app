@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { generateText } from '@rork-ai/toolkit-sdk';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -16,6 +16,7 @@ export function useMarketInsights(portfolioItems: string[]) {
     text: '',
     isLoading: true,
   });
+  const hasLoadedRef = useRef(false);
 
   const fetchNewInsight = useCallback(async (today: string) => {
     try {
@@ -63,8 +64,11 @@ export function useMarketInsights(portfolioItems: string[]) {
   }, [fetchNewInsight]);
 
   useEffect(() => {
+    if (hasLoadedRef.current) return;
+    hasLoadedRef.current = true;
     loadDailyInsight();
-  }, [loadDailyInsight]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return insight;
 }
