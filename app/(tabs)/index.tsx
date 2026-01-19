@@ -289,28 +289,58 @@ export default function DashboardScreen() {
     const padTop = 18;
     const padBottom = 26;
 
-    const safePortfolio = chartSnapshots.map((s) =>
-      Number.isFinite(s.portfolio_wert) ? (s.portfolio_wert ?? 0) : 0
-    );
-    const safeDeposits = chartSnapshots.map((s) =>
-      Number.isFinite(s.eingezahlt_bis_dahin) ? (s.eingezahlt_bis_dahin ?? 0) : 0
-    );
-
     const lastIndex = chartSnapshots.length - 1;
 
     const currentValue = resolveCurrentValue();
     const investedValue = resolveInvestedValue();
 
-    const portfolioValues = safePortfolio.map((v, i) => (i === lastIndex ? currentValue : v));
-    const depositsValues = safeDeposits.map((v, i) => (i === lastIndex ? investedValue : v));
+    console.log('[Dashboard] chartSnapshots', {
+      count: chartSnapshots.length,
+      first: chartSnapshots[0]?.datum,
+      last: chartSnapshots[lastIndex]?.datum,
+      currentValue,
+      investedValue,
+    });
 
-    const all = [...portfolioValues, ...depositsValues];
-    const rawMin = Math.min(...all);
-    const rawMax = Math.max(...all);
+    const portfolioRaw = chartSnapshots.map((s) =>
+      Number.isFinite(s.portfolio_wert) ? (s.portfolio_wert ?? 0) : null
+    );
+    const depositsRaw = chartSnapshots.map((s) =>
+      Number.isFinite(s.eingezahlt_bis_dahin) ? (s.eingezahlt_bis_dahin ?? 0) : null
+    );
+
+    const forwardFill = (values: (number | null)[], fallbackFirst: number) => {
+      const out: number[] = [];
+      let last: number | null = null;
+      for (let i = 0; i < values.length; i++) {
+        const v = values[i];
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          last = v;
+          out.push(v);
+        } else if (last !== null) {
+          out.push(last);
+        } else {
+          out.push(fallbackFirst);
+        }
+      }
+      return out;
+    };
+
+    const portfolioValues = forwardFill(portfolioRaw, currentValue).map((v, i) =>
+      i === lastIndex ? currentValue : v
+    );
+    const depositsValues = forwardFill(depositsRaw, 0).map((v, i) =>
+      i === lastIndex ? investedValue : v
+    );
+
+    const all = [...portfolioValues, ...depositsValues].filter((v) => Number.isFinite(v));
+    const rawMin = all.length ? Math.min(...all) : 0;
+    const rawMax = all.length ? Math.max(...all) : 1;
 
     const span = rawMax - rawMin;
-    const minValue = rawMin - span * 0.08;
-    const maxValue = rawMax + span * 0.12;
+    const pad = Math.max(1, Math.abs(rawMax) * 0.04, span * 0.12);
+    const minValue = rawMin - pad;
+    const maxValue = rawMax + pad;
     const range = maxValue - minValue || 1;
 
     const innerW = Math.max(1, chartWidth - padX * 2);
