@@ -12,6 +12,7 @@ import {
 import Svg, { Circle, G, Line, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   TrendingUp,
   TrendingDown,
@@ -26,48 +27,78 @@ import { useQuery } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { Investment, InvestmentETF, PortfolioSnapshot } from '@/types';
-import {
-  fetchInvestment,
-  fetchInvestmentETFs,
-  fetchPortfolioSnapshots,
-} from '@/services/investmentService';
+import { fetchPolicyBundle } from '@/services/policies';
+import type { PolicyBundle } from '@/services/policies';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function DashboardScreen() {
-  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-
-  const userEmail = user?.email || '';
+  const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
 
   const {
-    data: investment,
-    isLoading: investmentLoading,
-    refetch: refetchInvestment,
-  } = useQuery<Investment | null>({
-    queryKey: ['investment', userEmail],
-    queryFn: () => fetchInvestment(userEmail),
-    enabled: !!userEmail && isAuthenticated,
+    data: bundle,
+    isLoading: bundleLoading,
+    error: bundleError,
+    refetch: refetchBundle,
+  } = useQuery<PolicyBundle>({
+    queryKey: ['policy_bundle'],
+    queryFn: fetchPolicyBundle,
+    enabled: isAuthenticated,
+    staleTime: 0,
+    gcTime: 1000 * 60 * 10,
+    refetchOnMount: 'always',
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
   });
 
-  const {
-    data: etfs = [],
-    isLoading: etfsLoading,
-    refetch: refetchETFs,
-  } = useQuery<InvestmentETF[]>({
-    queryKey: ['investment_etfs', userEmail],
-    queryFn: () => fetchInvestmentETFs(userEmail),
-    enabled: !!userEmail && isAuthenticated,
-  });
+  const investment = useMemo<Investment | null>(() => {
+    return (bundle?.investment ?? null) as Investment | null;
+  }, [bundle?.investment]);
 
-  const {
-    data: snapshots = [],
-    isLoading: snapshotsLoading,
-    refetch: refetchSnapshots,
-  } = useQuery<PortfolioSnapshot[]>({
-    queryKey: ['portfolio_snapshots', userEmail],
-    queryFn: () => fetchPortfolioSnapshots(userEmail),
-    enabled: !!userEmail && isAuthenticated,
-  });
+  const etfs = useMemo<InvestmentETF[]>(() => {
+    return (bundle?.etfs ?? []) as InvestmentETF[];
+  }, [bundle?.etfs]);
+
+  const snapshots = useMemo<PortfolioSnapshot[]>(() => {
+    return (bundle?.snapshots ?? []) as PortfolioSnapshot[];
+  }, [bundle?.snapshots]);
+
+  const [refreshing, setRefreshing] = React.useState<boolean>(false);
+
+  const loadPortfolio = useCallback(async () => {
+    try {
+      console.log('[Dashboard] loadPortfolio start', {
+        isAuthenticated,
+        authEmail: user?.email,
+      });
+
+      const result = await refetchBundle();
+
+      if (result.error) {
+        console.log('[Dashboard] loadPortfolio error', {
+          message: (result.error as any)?.message,
+          status: (result.error as any)?.status,
+        });
+
+        const status = (result.error as any)?.status;
+        if (status === 401 || status === 403) {
+          await logout();
+          router.replace('/login');
+        }
+      } else {
+        console.log('[Dashboard] loadPortfolio ok', {
+          email: result.data?.email,
+          hasInvestment: !!result.data?.investment,
+          etfs: result.data?.etfs?.length ?? 0,
+          snaps: result.data?.snapshots?.length ?? 0,
+        });
+      }
+    } catch (e) {
+      console.log('[Dashboard] loadPortfolio catch', {
+        message: (e as any)?.message,
+      });
+    }
+  }, [isAuthenticated, logout, refetchBundle, user?.email]);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -75,15 +106,28 @@ export default function DashboardScreen() {
     }
   }, [authLoading, isAuthenticated]);
 
-  const [refreshing, setRefreshing] = React.useState(false);
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      loadPortfolio();
+    }
+  }, [authLoading, isAuthenticated, loadPortfolio]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isAuthenticated) {
+        loadPortfolio();
+      }
+      return () => {};
+    }, [isAuthenticated, loadPortfolio])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([refetchInvestment(), refetchETFs(), refetchSnapshots()]);
+    await loadPortfolio();
     setRefreshing(false);
-  }, [refetchInvestment, refetchETFs, refetchSnapshots]);
+  }, [loadPortfolio]);
 
-  const isDataLoading = investmentLoading || etfsLoading || snapshotsLoading;
+  const isDataLoading = bundleLoading;
 
   const chartSnapshots = useMemo<PortfolioSnapshot[]>(() => {
     if (snapshots.length === 0) return [];
@@ -280,7 +324,21 @@ export default function DashboardScreen() {
   }
 
   const renderChart = () => {
-    if (chartSnapshots.length === 0) return null;
+    if (chartSnapshots.length === 0) {
+      return (
+        <View style={styles.chartContainer} testID="dashboard-portfolio-chart-empty">
+          <View style={styles.chartHeaderRow}>
+            <Text style={styles.chartTitle}>Portfolio Verlauf</Text>
+            <View style={styles.chartChip}>
+              <Text style={styles.chartChipText}>12M</Text>
+            </View>
+          </View>
+          <Text style={styles.sectionSubtext}>
+            Noch keine Historie – Chart startet nach dem nächsten Tagesupdate.
+          </Text>
+        </View>
+      );
+    }
 
     const chartHeight = 200;
     const chartWidth = SCREEN_WIDTH - 80;
@@ -470,7 +528,14 @@ export default function DashboardScreen() {
   };
 
   const renderETFAllocation = () => {
-    if (etfs.length === 0) return null;
+    if (etfs.length === 0) {
+      return (
+        <View style={styles.section} testID="dashboard-etf-empty">
+          <Text style={styles.sectionTitle}>ETF-Allokation</Text>
+          <Text style={styles.sectionSubtext}>ETF-Allokation noch nicht synchronisiert.</Text>
+        </View>
+      );
+    }
 
     const colors = ['#000000', '#333333', '#555555', '#777777', '#999999', '#BBBBBB'];
 
@@ -527,14 +592,36 @@ export default function DashboardScreen() {
               <ActivityIndicator size="large" color={Colors.text} />
               <Text style={styles.loadingCardText}>Daten werden geladen...</Text>
             </View>
-          ) : !investment ? (
-            <View style={styles.emptyCard}>
+          ) : bundleError ? (
+            <View style={styles.emptyCard} testID="dashboard-error-card">
               <View style={styles.emptyIcon}>
                 <Clock size={40} color={Colors.textSecondary} strokeWidth={1.5} />
               </View>
-              <Text style={styles.emptyTitle}>Noch keine Daten vorhanden</Text>
+              <Text style={styles.emptyTitle}>Daten konnten nicht geladen werden</Text>
               <Text style={styles.emptyText}>
-                Bitte kontaktieren Sie Ihren Berater. Ihr Dashboard wird nach der Beratung automatisch befüllt.
+                {(bundleError as any)?.message === 'Failed to fetch' ||
+                String((bundleError as any)?.message ?? '').includes('Failed to fetch')
+                  ? 'Keine Verbindung oder Supabase ist nicht erreichbar.'
+                  : String((bundleError as any)?.message ?? 'Unbekannter Fehler')}
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.refreshButton, { marginTop: 18 }]}
+                onPress={onRefresh}
+                disabled={refreshing}
+                testID="dashboard-retry"
+              >
+                <RefreshCw size={20} color={Colors.text} strokeWidth={1.5} />
+              </TouchableOpacity>
+            </View>
+          ) : !investment ? (
+            <View style={styles.emptyCard} testID="dashboard-empty-investment">
+              <View style={styles.emptyIcon}>
+                <Clock size={40} color={Colors.textSecondary} strokeWidth={1.5} />
+              </View>
+              <Text style={styles.emptyTitle}>Noch keine Investment-Daten vorhanden</Text>
+              <Text style={styles.emptyText}>
+                Bitte später erneut laden. Wenn es länger dauert: bitte Berater kontaktieren.
               </Text>
             </View>
           ) : (
@@ -924,6 +1011,11 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
     color: Colors.text,
     marginBottom: 16,
+  },
+  sectionSubtext: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    lineHeight: 20,
   },
   etfList: {
     backgroundColor: Colors.backgroundSecondary,

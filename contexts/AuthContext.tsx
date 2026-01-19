@@ -13,17 +13,28 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   const [isLoading, setIsLoading] = useState(true);
   const [tempEmail, setTempEmail] = useState<string | null>(null);
 
-  const mapAuthUserToUser = useCallback((authUser: any): User => {
-    return {
-      id: authUser.id,
-      email: authUser.email || '',
-      phone: authUser.phone || '',
-      name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || 'Kunde',
-      avatarUrl: authUser.user_metadata?.avatar_url,
-      language: 'de',
-      createdAt: authUser.created_at || new Date().toISOString(),
-    };
+  const normalizeEmail = useCallback((value: unknown): string => {
+    if (typeof value !== 'string') return '';
+    return value.toLowerCase().trim();
   }, []);
+
+  const mapAuthUserToUser = useCallback(
+    (authUser: any): User => {
+      return {
+        id: authUser.id,
+        email: normalizeEmail(authUser.email),
+        phone: authUser.phone || '',
+        name:
+          authUser.user_metadata?.full_name ||
+          authUser.user_metadata?.name ||
+          'Kunde',
+        avatarUrl: authUser.user_metadata?.avatar_url,
+        language: 'de',
+        createdAt: authUser.created_at || new Date().toISOString(),
+      };
+    },
+    [normalizeEmail]
+  );
 
   const refreshUserData = useCallback(async (authUser: any) => {
     try {
