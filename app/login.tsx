@@ -19,50 +19,37 @@ import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function LoginScreen() {
-  const [input, setInput] = useState('');
+  const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
 
-  const handleLogin = async () => {
-    if (!input.trim()) {
-      Alert.alert('Fehler', 'Bitte geben Sie Ihre E-Mail-Adresse oder Handynummer ein.');
+  const validateEmail = (email: string) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const handleSendCode = async () => {
+    const trimmedEmail = email.trim().toLowerCase();
+    
+    if (!trimmedEmail) {
+      Alert.alert('Fehler', 'Bitte geben Sie Ihre E-Mail-Adresse ein.');
+      return;
+    }
+
+    if (!validateEmail(trimmedEmail)) {
+      Alert.alert('Fehler', 'Bitte geben Sie eine gültige E-Mail-Adresse ein.');
       return;
     }
 
     setIsLoading(true);
     try {
-      // Add a timeout to prevent infinite loading if network or Supabase hangs
-      const loginPromise = login(input.trim());
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Zeitüberschreitung. Bitte überprüfen Sie Ihre Internetverbindung.')), 15000)
-      );
-
-      const result = await Promise.race([loginPromise, timeoutPromise]);
+      const result = await login(trimmedEmail);
       
       if (result === 'check_email') {
-        // Navigate to 2FA / Verification screen for Email
-        router.push('/verify-2fa'); 
-        return;
-      }
-
-      if (result === 'check_phone') {
-        // Navigate to SMS Verification
-        // Clean phone number for params
-        const phone = input.trim().replace(/\s/g, '');
-        router.push({
-            pathname: '/verify-sms',
-            params: { phone, type: 'sms' }
-        });
-        return;
-      }
-      
-      if (result) {
-        router.replace('/(tabs)');
-      } else {
-        Alert.alert('Fehler', 'Login fehlgeschlagen. Bitte überprüfen Sie Ihre Eingabe.');
+        router.push('/verify-2fa');
       }
     } catch (error: any) {
-      console.log('Login error:', error);
+      console.error('Login error:', error);
       Alert.alert(
         'Fehler', 
         error.message || 'Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.'
@@ -93,45 +80,48 @@ export default function LoginScreen() {
                 />
                 <View style={styles.divider} />
                 <Text style={styles.subtitle}>
-                  Melden Sie sich an, um Ihre Finanzen zu verwalten
+                  Investment Dashboard
                 </Text>
               </View>
 
               <View style={styles.formContainer}>
-                  <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>E-Mail Adresse</Text>
+                <View style={styles.inputContainer}>
                   <View style={styles.inputIconContainer}>
                     <Mail size={20} color={Colors.textTertiary} strokeWidth={1.5} />
                   </View>
                   <TextInput
                     style={styles.input}
-                    placeholder="E-Mail oder Handynummer"
+                    placeholder="ihre@email.de"
                     placeholderTextColor={Colors.textTertiary}
-                    value={input}
-                    onChangeText={setInput}
+                    value={email}
+                    onChangeText={setEmail}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    autoComplete="email"
                     editable={!isLoading}
                     testID="email-input"
                   />
                 </View>
-
-                {/* Password input removed */ }
+                <Text style={styles.hint}>
+                  Wir senden Ihnen einen Bestätigungscode an diese E-Mail.
+                </Text>
               </View>
 
               <View style={styles.buttonContainer}>
                 <TouchableOpacity
                   style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
-                  onPress={handleLogin}
+                  onPress={handleSendCode}
                   disabled={isLoading}
-                  testID="login-button"
+                  testID="send-code-button"
                   activeOpacity={0.8}
                 >
                   {isLoading ? (
                     <ActivityIndicator color={Colors.background} />
                   ) : (
                     <>
-                      <Text style={styles.loginButtonText}>Anmelden</Text>
+                      <Text style={styles.loginButtonText}>Code senden</Text>
                       <ArrowRight size={20} color={Colors.background} strokeWidth={1.5} />
                     </>
                   )}
@@ -175,25 +165,32 @@ const styles = StyleSheet.create({
   },
   logo: {
     width: '100%',
-    height: 220,
-    maxWidth: 400,
-    marginBottom: 40,
+    height: 200,
+    maxWidth: 380,
+    marginBottom: 32,
   },
   divider: {
     width: 48,
     height: 1,
     backgroundColor: Colors.border,
-    marginVertical: 24,
+    marginVertical: 20,
   },
   subtitle: {
-    fontSize: 15,
+    fontSize: 16,
     color: Colors.textSecondary,
     textAlign: 'center',
-    lineHeight: 22,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
   formContainer: {
-    gap: 16,
+    gap: 8,
     marginBottom: 32,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '500' as const,
+    color: Colors.text,
+    marginBottom: 4,
   },
   inputContainer: {
     flexDirection: 'row',
@@ -215,8 +212,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.text,
   },
-  eyeButton: {
-    padding: 16,
+  hint: {
+    fontSize: 13,
+    color: Colors.textTertiary,
+    marginTop: 8,
   },
   buttonContainer: {
     gap: 16,

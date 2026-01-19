@@ -2,52 +2,40 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  phone: string;
+  phone?: string;
   avatarUrl?: string;
   language: 'de' | 'en';
   createdAt: string;
-  geburtsdatum?: string;
-  postleitzahl?: string;
-  beruf?: string;
-  user_type?: string;
 }
 
-export interface PerformanceDataPoint {
-  date: string;
-  value: number;
-}
-
-export interface EtfAllocation {
-  isin?: string;
-  name?: string;
-  percentage?: number;
-  value?: number;
-  [key: string]: any;
-}
-
-export interface Policy {
+export interface Investment {
   id: string;
-  userId: string;
-  versicherer: string;
+  kunde_email: string;
   produkt: string;
+  anbieter: string;
   monatsbeitrag: number;
+  einmalzahlung: number;
+  eingezahlt_netto?: number;
   depotwert: number;
-  rendite: number;
-  performanceHistorie: PerformanceDataPoint[];
-  kategorie: 'Leben' | 'Rente' | 'Fonds' | 'Sach' | 'Kranken';
-  vertragsbeginn: string;
-  vertragsnummer: string;
-  etfAllokation?: EtfAllocation[];
+  rendite_prozent: number;
+  startdatum: string;
 }
 
-export interface Document {
+export interface InvestmentETF {
   id: string;
-  userId: string;
-  titel: string;
-  url: string;
-  kategorie: 'Vertrag' | 'Rechnung' | 'Bescheinigung' | 'Sonstiges';
+  kunde_email: string;
+  isin: string;
+  name: string;
+  prozent: number;
+}
+
+export interface PortfolioSnapshot {
+  id: string;
+  kunde_email: string;
   datum: string;
-  policyId?: string;
+  portfolio_wert: number;
+  eingezahlt_bis_dahin: number;
+  rendite_prozent: number;
 }
 
 export interface ChatMessage {

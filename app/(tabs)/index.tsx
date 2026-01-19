@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,66 +7,84 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
   TrendingUp,
+  TrendingDown,
   Wallet,
   PiggyBank,
-  ChevronRight,
-  Calendar,
-  ArrowUpRight,
-  Sparkles,
+  RefreshCw,
   Clock,
+  Calendar,
+  CreditCard,
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { useMarketInsights } from '@/hooks/useMarketInsights';
-import { fetchUserPolicies, mapApiPolicyToPolicy } from '@/services/base44';
+import { Investment, InvestmentETF, PortfolioSnapshot } from '@/types';
+import {
+  fetchInvestment,
+  fetchInvestmentETFs,
+  fetchPortfolioSnapshots,
+} from '@/services/investmentService';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function DashboardScreen() {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const { data: policies = [], refetch, isLoading: isPoliciesLoading } = useQuery({
-    queryKey: ['policies', user?.id, isAuthenticated],
-    queryFn: async () => {
-      if (!isAuthenticated) return [];
-      
-      try {
-        const apiPolicies = await fetchUserPolicies();
-        if (!Array.isArray(apiPolicies)) {
-          console.error('fetchUserPolicies returned non-array:', apiPolicies);
-          return [];
-        }
-        return apiPolicies.map(mapApiPolicyToPolicy);
-      } catch (err) {
-        console.error('Error fetching policies:', err);
-        return [];
-      }
-    },
-    enabled: !!isAuthenticated,
+  const userEmail = user?.email || '';
+
+  const {
+    data: investment,
+    isLoading: investmentLoading,
+    refetch: refetchInvestment,
+  } = useQuery<Investment | null>({
+    queryKey: ['investment', userEmail],
+    queryFn: () => fetchInvestment(userEmail),
+    enabled: !!userEmail && isAuthenticated,
   });
 
-  const funds = policies.filter(p => p.kategorie === 'Fonds').map(p => p.produkt);
-  const { text: marketInsight, isLoading: isInsightLoading, date: insightDate } = useMarketInsights(funds);
+  const {
+    data: etfs = [],
+    isLoading: etfsLoading,
+    refetch: refetchETFs,
+  } = useQuery<InvestmentETF[]>({
+    queryKey: ['investment_etfs', userEmail],
+    queryFn: () => fetchInvestmentETFs(userEmail),
+    enabled: !!userEmail && isAuthenticated,
+  });
+
+  const {
+    data: snapshots = [],
+    isLoading: snapshotsLoading,
+    refetch: refetchSnapshots,
+  } = useQuery<PortfolioSnapshot[]>({
+    queryKey: ['portfolio_snapshots', userEmail],
+    queryFn: () => fetchPortfolioSnapshots(userEmail),
+    enabled: !!userEmail && isAuthenticated,
+  });
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.replace('/login' as any);
+    if (!authLoading && !isAuthenticated) {
+      router.replace('/login');
     }
-  }, [isLoading, isAuthenticated]);
+  }, [authLoading, isAuthenticated]);
 
   const [refreshing, setRefreshing] = React.useState(false);
 
-  const onRefresh = React.useCallback(async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await refetch();
+    await Promise.all([refetchInvestment(), refetchETFs(), refetchSnapshots()]);
     setRefreshing(false);
-  }, [refetch]);
+  }, [refetchInvestment, refetchETFs, refetchSnapshots]);
 
-  if (isLoading || !isAuthenticated) {
+  const isDataLoading = investmentLoading || etfsLoading || snapshotsLoading;
+
+  if (authLoading || !isAuthenticated) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={Colors.text} />
@@ -75,14 +93,6 @@ export default function DashboardScreen() {
     );
   }
 
-  const totalDepotwert = policies.reduce((sum, p) => sum + p.depotwert, 0);
-  const totalMonatsbeitrag = policies.reduce((sum, p) => sum + p.monatsbeitrag, 0);
-
-  const policiesWithRendite = policies.filter(p => p.rendite > 0);
-  const averageRendite = policiesWithRendite.length > 0
-    ? policiesWithRendite.reduce((sum, p) => sum + p.rendite, 0) / policiesWithRendite.length
-    : 0;
-
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('de-DE', {
       style: 'currency',
@@ -90,10 +100,180 @@ export default function DashboardScreen() {
     }).format(value);
   };
 
-  const etfPolicies = policies
-    .filter(p => p.kategorie === 'Fonds')
-    .sort((a, b) => b.depotwert - a.depotwert)
-    .slice(0, 5);
+  const formatPercent = (value: number) => {
+    const sign = value >= 0 ? '+' : '';
+    return `${sign}${value.toFixed(2)}%`;
+  };
+
+  const formatDate = (dateStr: string) => {
+    try {
+      return new Date(dateStr).toLocaleDateString('de-DE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Guten Morgen';
+    if (hour < 18) return 'Guten Tag';
+    return 'Guten Abend';
+  };
+
+  const renderChart = () => {
+    if (snapshots.length === 0) return null;
+
+    const chartHeight = 180;
+    const chartWidth = SCREEN_WIDTH - 80;
+    const padding = 20;
+
+    const values = snapshots.map(s => s.portfolio_wert);
+    const deposits = snapshots.map(s => s.eingezahlt_bis_dahin);
+    const minValue = Math.min(...values, ...deposits) * 0.95;
+    const maxValue = Math.max(...values, ...deposits) * 1.05;
+    const range = maxValue - minValue || 1;
+
+    const getY = (value: number) => {
+      return chartHeight - padding - ((value - minValue) / range) * (chartHeight - padding * 2);
+    };
+
+
+
+    return (
+      <View style={styles.chartContainer}>
+        <Text style={styles.chartTitle}>Portfolio Verlauf</Text>
+        <View style={styles.chartLegend}>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: Colors.text }]} />
+            <Text style={styles.legendText}>Depotwert</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: Colors.textTertiary }]} />
+            <Text style={styles.legendText}>Eingezahlt</Text>
+          </View>
+        </View>
+        <View style={styles.chartWrapper}>
+          <View style={{ width: chartWidth, height: chartHeight }}>
+            {snapshots.length > 1 && (
+              <>
+                <View style={[styles.chartLine, { 
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: chartWidth,
+                  height: chartHeight,
+                }]}>
+                  {snapshots.map((s, i) => {
+                    if (i === 0) return null;
+                    const x1 = padding + ((i - 1) / (snapshots.length - 1)) * (chartWidth - padding * 2);
+                    const y1 = getY(snapshots[i - 1].portfolio_wert);
+                    const x2 = padding + (i / (snapshots.length - 1)) * (chartWidth - padding * 2);
+                    const y2 = getY(s.portfolio_wert);
+                    const length = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+                    const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
+                    return (
+                      <View
+                        key={`portfolio-${i}`}
+                        style={{
+                          position: 'absolute',
+                          left: x1,
+                          top: y1,
+                          width: length,
+                          height: 2,
+                          backgroundColor: Colors.text,
+                          transform: [{ rotate: `${angle}deg` }],
+                          transformOrigin: 'left center',
+                        }}
+                      />
+                    );
+                  })}
+                  {snapshots.map((s, i) => {
+                    if (i === 0) return null;
+                    const x1 = padding + ((i - 1) / (snapshots.length - 1)) * (chartWidth - padding * 2);
+                    const y1 = getY(snapshots[i - 1].eingezahlt_bis_dahin);
+                    const x2 = padding + (i / (snapshots.length - 1)) * (chartWidth - padding * 2);
+                    const y2 = getY(s.eingezahlt_bis_dahin);
+                    const length = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+                    const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
+                    return (
+                      <View
+                        key={`deposit-${i}`}
+                        style={{
+                          position: 'absolute',
+                          left: x1,
+                          top: y1,
+                          width: length,
+                          height: 2,
+                          backgroundColor: Colors.textTertiary,
+                          transform: [{ rotate: `${angle}deg` }],
+                          transformOrigin: 'left center',
+                          opacity: 0.6,
+                        }}
+                      />
+                    );
+                  })}
+                </View>
+                {snapshots.map((s, i) => {
+                  const x = padding + (i / (snapshots.length - 1)) * (chartWidth - padding * 2);
+                  const y = getY(s.portfolio_wert);
+                  return (
+                    <View
+                      key={`dot-${i}`}
+                      style={{
+                        position: 'absolute',
+                        left: x - 4,
+                        top: y - 4,
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        backgroundColor: Colors.text,
+                      }}
+                    />
+                  );
+                })}
+              </>
+            )}
+          </View>
+        </View>
+        {snapshots.length > 0 && (
+          <View style={styles.chartDates}>
+            <Text style={styles.chartDateText}>{formatDate(snapshots[0].datum)}</Text>
+            <Text style={styles.chartDateText}>{formatDate(snapshots[snapshots.length - 1].datum)}</Text>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  const renderETFAllocation = () => {
+    if (etfs.length === 0) return null;
+
+    const colors = ['#000000', '#333333', '#555555', '#777777', '#999999', '#BBBBBB'];
+
+    return (
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>ETF-Allokation</Text>
+        <View style={styles.etfList}>
+          {etfs.map((etf, index) => (
+            <View key={etf.id || index} style={styles.etfItem}>
+              <View style={styles.etfInfo}>
+                <View style={[styles.etfColorDot, { backgroundColor: colors[index % colors.length] }]} />
+                <View style={styles.etfTextContainer}>
+                  <Text style={styles.etfName} numberOfLines={1}>{etf.name}</Text>
+                  <Text style={styles.etfIsin}>{etf.isin}</Text>
+                </View>
+              </View>
+              <Text style={styles.etfPercent}>{etf.prozent.toFixed(1)}%</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -101,145 +281,121 @@ export default function DashboardScreen() {
         <ScrollView
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.text} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={Colors.text}
+            />
           }
         >
           <View style={styles.header}>
             <View>
-              <Text style={styles.greeting}>Guten Tag,</Text>
-              <Text style={styles.userName}>{user?.name || 'Kunde'}</Text>
+              <Text style={styles.greeting}>{getGreeting()}</Text>
+              <Text style={styles.subtitle}>Ihr Investment Dashboard</Text>
             </View>
+            <TouchableOpacity
+              style={styles.refreshButton}
+              onPress={onRefresh}
+              disabled={refreshing}
+            >
+              <RefreshCw size={20} color={Colors.text} strokeWidth={1.5} />
+            </TouchableOpacity>
           </View>
 
-          {isPoliciesLoading ? (
-            <View style={styles.portfolioCard}>
+          {isDataLoading ? (
+            <View style={styles.loadingCard}>
               <ActivityIndicator size="large" color={Colors.text} />
+              <Text style={styles.loadingCardText}>Daten werden geladen...</Text>
             </View>
-          ) : policies.length === 0 ? (
-            <View style={styles.portfolioCard}>
-              <View style={{ alignItems: 'center', paddingVertical: 24, gap: 16 }}>
-                <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: Colors.backgroundSecondary, alignItems: 'center', justifyContent: 'center' }}>
-                  <Clock size={32} color={Colors.text} strokeWidth={1.5} />
-                </View>
-                <View style={{ alignItems: 'center', gap: 8, paddingHorizontal: 16 }}>
-                  <Text style={{ fontSize: 18, fontWeight: '600', color: Colors.text, textAlign: 'center' }}>
-                    Einrichtung läuft
-                  </Text>
-                  <Text style={{ fontSize: 15, color: Colors.textSecondary, textAlign: 'center', lineHeight: 24 }}>
-                    Ihre Daten werden in den nächsten Tagen von unserem Backoffice eingepflegt. Bitte haben Sie noch etwas Geduld.
-                  </Text>
-                </View>
+          ) : !investment ? (
+            <View style={styles.emptyCard}>
+              <View style={styles.emptyIcon}>
+                <Clock size={40} color={Colors.textSecondary} strokeWidth={1.5} />
               </View>
+              <Text style={styles.emptyTitle}>Noch keine Daten vorhanden</Text>
+              <Text style={styles.emptyText}>
+                Bitte kontaktieren Sie Ihren Berater. Ihr Dashboard wird nach der Beratung automatisch befüllt.
+              </Text>
             </View>
           ) : (
-            <View style={styles.portfolioCard}>
-              <View style={styles.portfolioHeader}>
-                <Text style={styles.portfolioLabel}>Gesamtinvestment</Text>
-                <View style={styles.trendBadge}>
-                  <ArrowUpRight size={14} color={Colors.text} strokeWidth={1.5} />
-                  <Text style={styles.trendText}>+{averageRendite.toFixed(1)}%</Text>
-                </View>
-              </View>
-              <Text style={styles.portfolioValue}>{formatCurrency(totalDepotwert)}</Text>
-              <View style={styles.portfolioStats}>
-                <View style={styles.portfolioStat}>
-                  <TrendingUp size={16} color={Colors.textSecondary} strokeWidth={1.5} />
-                  <Text style={styles.portfolioStatValue}>+{averageRendite.toFixed(1)}%</Text>
-                  <Text style={styles.portfolioStatLabel}>Ø Rendite</Text>
-                </View>
-                <View style={styles.portfolioDivider} />
-                <View style={styles.portfolioStat}>
-                  <Wallet size={16} color={Colors.textSecondary} strokeWidth={1.5} />
-                  <Text style={styles.portfolioStatValue}>{formatCurrency(totalMonatsbeitrag)}</Text>
-                  <Text style={styles.portfolioStatLabel}>Monatlich</Text>
-                </View>
-              </View>
-            </View>
-          )}
-
-          <View style={styles.quickActions}>
-            <TouchableOpacity
-              style={styles.quickAction}
-              onPress={() => router.push('/appointments' as any)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.quickActionIcon}>
-                <Calendar size={22} color={Colors.text} strokeWidth={1.5} />
-              </View>
-              <Text style={styles.quickActionText}>Termin buchen</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.quickAction}
-              onPress={() => router.push('/(tabs)/policies' as any)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.quickActionIcon}>
-                <PiggyBank size={22} color={Colors.text} strokeWidth={1.5} />
-              </View>
-              <Text style={styles.quickActionText}>Alle Policen</Text>
-            </TouchableOpacity>
-          </View>
-
-          {policies.length > 0 && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Meine ETFs & Fonds</Text>
-                <TouchableOpacity onPress={() => router.push('/(tabs)/policies' as any)}>
-                  <Text style={styles.sectionLink}>Alle anzeigen</Text>
-                </TouchableOpacity>
-              </View>
-              {etfPolicies.map((policy) => (
-                <TouchableOpacity
-                  key={policy.id}
-                  style={styles.policyCard}
-                  onPress={() => router.push(`/policy/${policy.id}` as any)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.policyInfo}>
-                    <Text style={styles.policyName}>{policy.produkt}</Text>
-                    <Text style={styles.policyInsurer}>{policy.versicherer}</Text>
+            <>
+              <View style={styles.kpiGrid}>
+                <View style={styles.kpiCard}>
+                  <View style={styles.kpiIconContainer}>
+                    <Wallet size={20} color={Colors.text} strokeWidth={1.5} />
                   </View>
-                  <View style={styles.policyValues}>
-                    <Text style={styles.policyValue}>{formatCurrency(policy.depotwert)}</Text>
-                    <View style={styles.policyRendite}>
-                      <TrendingUp size={14} color={Colors.text} strokeWidth={1.5} />
-                      <Text style={styles.policyRenditeText}>+{policy.rendite}%</Text>
+                  <Text style={styles.kpiLabel}>Depotwert aktuell</Text>
+                  <Text style={styles.kpiValue}>{formatCurrency(investment.depotwert)}</Text>
+                </View>
+
+                <View style={styles.kpiCard}>
+                  <View style={styles.kpiIconContainer}>
+                    <CreditCard size={20} color={Colors.text} strokeWidth={1.5} />
+                  </View>
+                  <Text style={styles.kpiLabel}>Monatlicher Beitrag</Text>
+                  <Text style={styles.kpiValue}>{formatCurrency(investment.monatsbeitrag)}</Text>
+                </View>
+
+                {investment.einmalzahlung > 0 && (
+                  <View style={styles.kpiCard}>
+                    <View style={styles.kpiIconContainer}>
+                      <PiggyBank size={20} color={Colors.text} strokeWidth={1.5} />
                     </View>
+                    <Text style={styles.kpiLabel}>Einmalzahlung</Text>
+                    <Text style={styles.kpiValue}>{formatCurrency(investment.einmalzahlung)}</Text>
                   </View>
-                  <ChevronRight size={20} color={Colors.textTertiary} strokeWidth={1.5} />
-                </TouchableOpacity>
-              ))}
-              {etfPolicies.length === 0 && (
-                <Text style={styles.emptyText}>Keine Fonds oder ETFs gefunden.</Text>
-              )}
-            </View>
-          )}
+                )}
 
-          {policies.length > 0 && marketInsight && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Daily Market Insights</Text>
-                <View style={styles.aiBadge}>
-                  <Sparkles size={12} color="#FFFFFF" />
-                  <Text style={styles.aiBadgeText}>AI Powered</Text>
+                <View style={styles.kpiCard}>
+                  <View style={styles.kpiIconContainer}>
+                    {investment.rendite_prozent >= 0 ? (
+                      <TrendingUp size={20} color={Colors.text} strokeWidth={1.5} />
+                    ) : (
+                      <TrendingDown size={20} color={Colors.text} strokeWidth={1.5} />
+                    )}
+                  </View>
+                  <Text style={styles.kpiLabel}>Rendite</Text>
+                  <Text style={[
+                    styles.kpiValue,
+                    { color: investment.rendite_prozent >= 0 ? Colors.text : Colors.error }
+                  ]}>
+                    {formatPercent(investment.rendite_prozent)}
+                  </Text>
                 </View>
               </View>
-              <View style={styles.insightCard}>
-                {isInsightLoading ? (
-                  <ActivityIndicator size="small" color={Colors.text} />
-                ) : (
-                  <>
-                    <Text style={styles.insightText}>{marketInsight}</Text>
-                    {insightDate && (
-                      <Text style={styles.insightDate}>
-                        Aktualisiert: {new Date(insightDate).toLocaleDateString('de-DE')}
-                      </Text>
-                    )}
-                  </>
-                )}
+
+              <View style={styles.investmentDetails}>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Produkt</Text>
+                  <Text style={styles.detailValue}>{investment.produkt}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Anbieter</Text>
+                  <Text style={styles.detailValue}>{investment.anbieter}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Vertragsbeginn</Text>
+                  <Text style={styles.detailValue}>{formatDate(investment.startdatum)}</Text>
+                </View>
               </View>
-            </View>
+
+              {renderChart()}
+              {renderETFAllocation()}
+
+              <TouchableOpacity
+                style={styles.appointmentButton}
+                onPress={() => router.push('/appointments')}
+                activeOpacity={0.7}
+              >
+                <Calendar size={20} color={Colors.background} strokeWidth={1.5} />
+                <Text style={styles.appointmentButtonText}>Termin buchen</Text>
+              </TouchableOpacity>
+            </>
           )}
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Daten werden automatisch aktualisiert</Text>
+          </View>
         </ScrollView>
       </SafeAreaView>
     </View>
@@ -268,206 +424,250 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingHorizontal: 24,
-    paddingTop: 8,
+    paddingTop: 16,
     paddingBottom: 24,
   },
   greeting: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-  },
-  userName: {
     fontSize: 28,
     fontWeight: '700' as const,
     color: Colors.text,
-    marginTop: 4,
     letterSpacing: -0.5,
   },
-  portfolioCard: {
-    marginHorizontal: 24,
-    padding: 24,
-    backgroundColor: Colors.backgroundSecondary,
-    borderRadius: 16,
-    marginBottom: 24,
-  },
-  portfolioHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  portfolioLabel: {
-    fontSize: 14,
+  subtitle: {
+    fontSize: 15,
     color: Colors.textSecondary,
+    marginTop: 4,
   },
-  trendBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.background,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    gap: 4,
-  },
-  trendText: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    color: Colors.text,
-  },
-  portfolioValue: {
-    fontSize: 36,
-    fontWeight: '700' as const,
-    color: Colors.text,
-    marginBottom: 20,
-    letterSpacing: -1,
-  },
-  portfolioStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  portfolioStat: {
-    flex: 1,
-    gap: 6,
-  },
-  portfolioStatValue: {
-    fontSize: 18,
-    fontWeight: '600' as const,
-    color: Colors.text,
-  },
-  portfolioStatLabel: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-  },
-  portfolioDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: Colors.border,
-    marginHorizontal: 16,
-  },
-  quickActions: {
-    flexDirection: 'row',
-    paddingHorizontal: 24,
-    gap: 12,
-    marginBottom: 32,
-  },
-  quickAction: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+  refreshButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: Colors.backgroundSecondary,
-    padding: 16,
-    borderRadius: 12,
-    gap: 12,
-  },
-  quickActionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: Colors.background,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  quickActionText: {
-    fontSize: 14,
+  loadingCard: {
+    marginHorizontal: 24,
+    padding: 48,
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: 16,
+    alignItems: 'center',
+    gap: 16,
+  },
+  loadingCardText: {
+    fontSize: 15,
+    color: Colors.textSecondary,
+  },
+  emptyCard: {
+    marginHorizontal: 24,
+    padding: 32,
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  emptyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    fontSize: 20,
     fontWeight: '600' as const,
     color: Colors.text,
-    flex: 1,
+    marginBottom: 12,
+    textAlign: 'center',
   },
-  section: {
-    paddingHorizontal: 24,
-    marginBottom: 32,
+  emptyText: {
+    fontSize: 15,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
   },
-  sectionHeader: {
+  kpiGrid: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+    flexWrap: 'wrap',
+    paddingHorizontal: 20,
+    gap: 12,
+    marginBottom: 24,
   },
-  sectionTitle: {
+  kpiCard: {
+    width: (SCREEN_WIDTH - 52) / 2,
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: 12,
+    padding: 16,
+  },
+  kpiIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  kpiLabel: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginBottom: 4,
+  },
+  kpiValue: {
     fontSize: 20,
     fontWeight: '700' as const,
     color: Colors.text,
   },
-  sectionLink: {
-    fontSize: 14,
-    color: Colors.text,
-    opacity: 0.6,
-  },
-  policyCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  investmentDetails: {
+    marginHorizontal: 24,
     backgroundColor: Colors.backgroundSecondary,
     borderRadius: 12,
     padding: 16,
-    marginBottom: 12,
-    gap: 12,
+    marginBottom: 24,
   },
-  policyInfo: {
-    flex: 1,
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  policyName: {
-    fontSize: 15,
-    fontWeight: '600' as const,
-    color: Colors.text,
-    marginBottom: 4,
-  },
-  policyInsurer: {
-    fontSize: 13,
+  detailLabel: {
+    fontSize: 14,
     color: Colors.textSecondary,
   },
-  policyValues: {
-    alignItems: 'flex-end',
-  },
-  policyValue: {
-    fontSize: 16,
-    fontWeight: '700' as const,
+  detailValue: {
+    fontSize: 14,
+    fontWeight: '500' as const,
     color: Colors.text,
-    marginBottom: 4,
   },
-  policyRendite: {
+  chartContainer: {
+    marginHorizontal: 24,
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
+  },
+  chartTitle: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  chartLegend: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 16,
+  },
+  legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
   },
-  policyRenditeText: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    color: Colors.text,
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
-  emptyText: {
-    textAlign: 'center',
+  legendText: {
+    fontSize: 12,
     color: Colors.textSecondary,
-    fontSize: 14,
+  },
+  chartWrapper: {
+    alignItems: 'center',
+  },
+  chartLine: {
+    overflow: 'hidden',
+  },
+  chartDates: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginTop: 8,
   },
-  aiBadge: {
+  chartDateText: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+  },
+  section: {
+    marginHorizontal: 24,
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    marginBottom: 16,
+  },
+  etfList: {
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  etfItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.text,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    gap: 4,
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  aiBadgeText: {
-    fontSize: 10,
+  etfInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 12,
+  },
+  etfColorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 12,
+  },
+  etfTextContainer: {
+    flex: 1,
+  },
+  etfName: {
+    fontSize: 14,
+    fontWeight: '500' as const,
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  etfIsin: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+  },
+  etfPercent: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: Colors.text,
+  },
+  appointmentButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+    marginHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+    marginBottom: 24,
+  },
+  appointmentButtonText: {
+    fontSize: 16,
     fontWeight: '600' as const,
     color: Colors.background,
   },
-  insightCard: {
-    backgroundColor: Colors.backgroundSecondary,
-    borderRadius: 12,
-    padding: 16,
+  footer: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    alignItems: 'center',
   },
-  insightText: {
-    fontSize: 14,
-    color: Colors.text,
-    lineHeight: 22,
-  },
-  insightDate: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    marginTop: 12,
+  footerText: {
+    fontSize: 13,
+    color: Colors.textTertiary,
   },
 });

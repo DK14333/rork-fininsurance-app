@@ -22,8 +22,6 @@ import {
   LogOut,
   ChevronRight,
   Calendar,
-  MapPin,
-  Briefcase,
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
@@ -66,7 +64,7 @@ export default function ProfileScreen() {
           style: 'destructive',
           onPress: async () => {
             await logout();
-            router.replace('/login' as any);
+            router.replace('/login');
           },
         },
       ]
@@ -95,50 +93,29 @@ export default function ProfileScreen() {
                 </View>
               )}
             </View>
-            <Text style={styles.userName}>{user?.name || 'Benutzer'}</Text>
-            <Text style={styles.userEmail}>{user?.email || 'email@example.com'}</Text>
-            <TouchableOpacity style={styles.editButton} activeOpacity={0.7}>
-              <Text style={styles.editButtonText}>Profil bearbeiten</Text>
-            </TouchableOpacity>
+            <Text style={styles.userName}>{user?.name || 'Kunde'}</Text>
+            <Text style={styles.userEmail}>{user?.email || ''}</Text>
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Persönliche Daten</Text>
+            <Text style={styles.sectionTitle}>Kontaktdaten</Text>
             <View style={styles.sectionContent}>
               <SettingItem
                 icon={<User size={20} color={Colors.textSecondary} strokeWidth={1.5} />}
                 title="Name"
-                subtitle={user?.name}
+                subtitle={user?.name || 'Nicht angegeben'}
                 showChevron={false}
               />
               <SettingItem
                 icon={<Mail size={20} color={Colors.textSecondary} strokeWidth={1.5} />}
                 title="E-Mail"
-                subtitle={user?.email}
+                subtitle={user?.email || 'Nicht angegeben'}
                 showChevron={false}
               />
               <SettingItem
                 icon={<Phone size={20} color={Colors.textSecondary} strokeWidth={1.5} />}
                 title="Telefon"
                 subtitle={user?.phone || 'Nicht angegeben'}
-                showChevron={false}
-              />
-              <SettingItem
-                icon={<Calendar size={20} color={Colors.textSecondary} strokeWidth={1.5} />}
-                title="Geburtsdatum"
-                subtitle={user?.geburtsdatum || 'Nicht angegeben'}
-                showChevron={false}
-              />
-              <SettingItem
-                icon={<MapPin size={20} color={Colors.textSecondary} strokeWidth={1.5} />}
-                title="Postleitzahl"
-                subtitle={user?.postleitzahl || 'Nicht angegeben'}
-                showChevron={false}
-              />
-              <SettingItem
-                icon={<Briefcase size={20} color={Colors.textSecondary} strokeWidth={1.5} />}
-                title="Beruf"
-                subtitle={user?.beruf || 'Nicht angegeben'}
                 showChevron={false}
               />
             </View>
@@ -170,7 +147,7 @@ export default function ProfileScreen() {
               <SettingItem
                 icon={<Calendar size={20} color={Colors.textSecondary} strokeWidth={1.5} />}
                 title="Termin buchen"
-                onPress={() => router.push('/appointments' as any)}
+                onPress={() => router.push('/appointments')}
               />
               <SettingItem
                 icon={<HelpCircle size={20} color={Colors.textSecondary} strokeWidth={1.5} />}
@@ -259,19 +236,6 @@ const styles = StyleSheet.create({
   userEmail: {
     fontSize: 14,
     color: Colors.textSecondary,
-    marginBottom: 20,
-  },
-  editButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.text,
-  },
-  editButtonText: {
-    fontSize: 14,
-    fontWeight: '500' as const,
-    color: Colors.text,
   },
   section: {
     marginTop: 32,

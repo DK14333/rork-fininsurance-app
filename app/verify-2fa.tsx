@@ -11,85 +11,48 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { ArrowLeft, Mail } from 'lucide-react-native';
-import { supabase } from '@/services/supabase';
+import { ArrowLeft, Mail, CheckCircle } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function Verify2FAScreen() {
   const [code, setCode] = useState(['', '', '', '', '', '', '', '']);
-  const [timer, setTimer] = useState(30);
+  const [timer, setTimer] = useState(60);
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
   const inputRefs = useRef<(TextInput | null)[]>([]);
-  const { verifyOTP, resendOTP, tempUser, user, sendPhoneOTP } = useAuth(); 
+  const { verifyOTP, resendOTP, tempUser, isAuthenticated } = useAuth();
 
-  // If user is already logged in (e.g. via deep link), check if we need to do anything or just go to tabs
-  // BUT: We need to ensure we enforce the phone flow even if they come from deep link.
   useEffect(() => {
-    if (user && !isLoading) {
-        // If we are here, we might have been redirected from login or deep link.
-        // We should check phone status.
-        // But be careful not to create infinite loops if this page IS the destination.
-        // This page is "Verify Email OTP".
-        
-        // If user is ALREADY logged in, they shouldn't be here entering email code,
-        // UNLESS they just clicked the link and the app opened this page.
-        // But usually deep link opens 'auth-callback' or just the app.
-        
-        // If we are here and logged in, let's just proceed to phone check.
-        const checkPhone = async () => {
-             // Check if user has a verified phone number for 2FA
-             if (user.phone) {
-                 // Send OTP to phone and redirect to verify-sms
-                 // We must catch error in case sending fails
-                 try {
-                     await sendPhoneOTP(user.phone);
-                     router.replace({
-                        pathname: '/verify-sms',
-                        params: { phone: user.phone, type: 'sms' }
-                     });
-                 } catch (e) {
-                     console.error('Error sending SMS on auto-check:', e);
-                     // Fallback to tabs if SMS fails? Or stay here?
-                     // Better to let them know or try again.
-                     // For now, if we can't send SMS, we might be stuck.
-                     // But if we are already logged in, maybe we just go to tabs to not lock out user?
-                     // User complained about "loading forever", so let's be careful.
-                     router.replace('/(tabs)');
-                 }
-             } else {
-                 router.replace('/setup-phone');
-             }
-        }
-        checkPhone();
+    if (isAuthenticated && !isLoading && !isSuccess) {
+      router.replace('/(tabs)');
     }
-  }, [user, isLoading, sendPhoneOTP]);
+  }, [isAuthenticated, isLoading, isSuccess]);
 
   useEffect(() => {
-    // Focus first input on mount
     setTimeout(() => {
-        inputRefs.current[0]?.focus();
+      inputRefs.current[0]?.focus();
     }, 100);
   }, []);
 
   useEffect(() => {
-    // Timer for resend
-    let interval: any;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (timer > 0) {
       interval = setInterval(() => {
         setTimer((prev) => (prev > 0 ? prev - 1 : 0));
       }, 1000);
     }
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [timer]);
 
   const handleCodeChange = (text: string, index: number) => {
     const newCode = [...code];
     
-    // Handle paste
     if (text.length > 1) {
-      const pastedCode = text.slice(0, 8).split('');
+      const pastedCode = text.replace(/\D/g, '').slice(0, 8).split('');
       for (let i = 0; i < 8; i++) {
         if (pastedCode[i]) newCode[i] = pastedCode[i];
       }
@@ -101,16 +64,14 @@ export default function Verify2FAScreen() {
       return;
     }
 
-    // Handle single character
-    newCode[index] = text;
+    const cleanText = text.replace(/\D/g, '');
+    newCode[index] = cleanText;
     setCode(newCode);
 
-    // Auto-advance
-    if (text && index < 7) {
+    if (cleanText && index < 7) {
       inputRefs.current[index + 1]?.focus();
     }
 
-    // Auto-verify when filled
     if (newCode.every((c) => c !== '') && index === 7) {
       verifyCode(newCode.join(''));
     }
@@ -127,53 +88,23 @@ export default function Verify2FAScreen() {
     setIsLoading(true);
     
     try {
-      // Use AuthContext to verify (Supabase)
-      // This verifies the EMAIL OTP (Magic Code)
       const success = await verifyOTP(fullCode);
       
       if (success) {
-        // Success! User is logged in via Email.
-        
-        // NOW: Check if user has a verified phone number for 2FA.
-        // We need to wait a tick for user state to be populated in context if not already
-        // But verifyOTP updates session/user in context.
-        // However, we might need to fetch the fresh user to be sure about 'phone_confirmed_at' or 'phone'
-        
-        // Since we cannot easily access the *fresh* user object inside this function from context state 
-        // (closure captures old state), we rely on what verifyOTP might return or we fetch it.
-        // BUT verifyOTP in AuthContext returns boolean.
-        
-        // Let's assume we proceed to a check logic.
-        // We can do a quick check via Supabase directly or just redirect to a loading/check screen.
-        // Or we can just check 'user' in a useEffect? 
-        
-        // Better: We handle the logic here.
-        // We'll trust the user will be updated.
-        // Actually, we can just redirect to an intermediate check or do it here.
-        
-        // Let's try to get the user from supabase directly to be safe
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        
-        if (currentUser?.phone && currentUser?.phone_confirmed_at) {
-            // User has phone setup -> Go to SMS verification (Login 2FA)
-            // Send OTP to phone
-            await sendPhoneOTP(currentUser.phone);
-            router.replace({
-                pathname: '/verify-sms',
-                params: { phone: currentUser.phone, type: 'sms' }
-            });
-        } else {
-            // User needs to setup phone (First time 2FA setup)
-            router.replace('/setup-phone');
-        }
+        setIsSuccess(true);
+        setTimeout(() => {
+          router.replace('/(tabs)');
+        }, 1000);
       } else {
         Alert.alert('Fehler', 'Der eingegebene Code ist falsch oder abgelaufen.');
         setCode(['', '', '', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
       }
     } catch (error) {
-      console.log('Verification error:', error);
-      Alert.alert('Fehler', 'Ein Fehler ist aufgetreten.');
+      console.error('Verification error:', error);
+      Alert.alert('Fehler', 'Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.');
+      setCode(['', '', '', '', '', '', '', '']);
+      inputRefs.current[0]?.focus();
     } finally {
       setIsLoading(false);
     }
@@ -185,13 +116,13 @@ export default function Verify2FAScreen() {
     setIsResending(true);
     try {
       await resendOTP();
-      setTimer(30);
+      setTimer(60);
       setCode(['', '', '', '', '', '', '', '']);
       inputRefs.current[0]?.focus();
       Alert.alert('Code gesendet', 'Ein neuer Code wurde an Ihre E-Mail gesendet.');
     } catch (error) {
-        console.log('Resend error:', error);
-        Alert.alert('Fehler', 'Code konnte nicht erneut gesendet werden.');
+      console.error('Resend error:', error);
+      Alert.alert('Fehler', 'Code konnte nicht erneut gesendet werden.');
     } finally {
       setIsResending(false);
     }
@@ -200,6 +131,22 @@ export default function Verify2FAScreen() {
   const maskedEmail = tempUser?.email
     ? tempUser.email.replace(/(.{2})(.*)(@.*)/, '$1***$3')
     : 'Ihre E-Mail';
+
+  if (isSuccess) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.successContainer}>
+            <View style={styles.successIcon}>
+              <CheckCircle size={64} color={Colors.primary} strokeWidth={1.5} />
+            </View>
+            <Text style={styles.successTitle}>Erfolgreich angemeldet</Text>
+            <Text style={styles.successText}>Sie werden weitergeleitet...</Text>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -221,11 +168,10 @@ export default function Verify2FAScreen() {
 
           <Text style={styles.title}>Code eingeben</Text>
           <Text style={styles.subtitle}>
-            Wir haben Ihnen einen 8-stelligen Code an {maskedEmail} gesendet.
+            Wir haben einen 8-stelligen Code an{'\n'}{maskedEmail} gesendet.
           </Text>
           <Text style={styles.instruction}>
-            Bitte geben Sie den Code ein, um sich anzumelden.
-            {'\n'}Überprüfen Sie auch Ihren Spam-Ordner.
+            Bitte prüfen Sie auch Ihren Spam-Ordner.
           </Text>
 
           <View style={styles.codeContainer}>
@@ -256,22 +202,27 @@ export default function Verify2FAScreen() {
             disabled={timer > 0 || isResending}
           >
             {isResending ? (
-                <ActivityIndicator color={Colors.primary} size="small" />
+              <ActivityIndicator color={Colors.primary} size="small" />
             ) : (
-                <Text style={[
-                  styles.resendText,
-                  timer > 0 && styles.resendTextDisabled
-                ]}>
-                  {timer > 0 
-                    ? `Code erneut senden in ${timer}s`
-                    : 'Code erneut senden'}
-                </Text>
+              <Text style={[
+                styles.resendText,
+                timer > 0 && styles.resendTextDisabled
+              ]}>
+                {timer > 0 
+                  ? `Code erneut senden in ${timer}s`
+                  : 'Code erneut senden'}
+              </Text>
             )}
           </TouchableOpacity>
         </View>
 
         <View style={styles.footer}>
-           {isLoading && <ActivityIndicator color={Colors.primary} style={styles.loader} />}
+          {isLoading && (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator color={Colors.primary} />
+              <Text style={styles.loadingText}>Wird überprüft...</Text>
+            </View>
+          )}
         </View>
       </SafeAreaView>
     </View>
@@ -300,19 +251,19 @@ const styles = StyleSheet.create({
     paddingTop: 40,
   },
   iconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     backgroundColor: Colors.backgroundSecondary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 24,
+    marginBottom: 32,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 28,
+    fontWeight: '700' as const,
     color: Colors.text,
     marginBottom: 12,
   },
@@ -320,31 +271,31 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.textSecondary,
     textAlign: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
+    lineHeight: 24,
   },
   instruction: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: Colors.textTertiary,
     textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 20,
+    marginBottom: 32,
   },
   codeContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 6,
+    gap: 8,
     width: '100%',
-    marginBottom: 24,
+    marginBottom: 32,
   },
   codeInput: {
-    width: 32, // Reduced from 36 to fit 8 digits better
-    height: 48,
+    width: 36,
+    height: 52,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.border,
     textAlign: 'center',
-    fontSize: 18, // Reduced font size slightly
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '600' as const,
     color: Colors.text,
     backgroundColor: Colors.background,
   },
@@ -359,12 +310,11 @@ const styles = StyleSheet.create({
   resendButton: {
     paddingVertical: 12,
     paddingHorizontal: 24,
-    marginBottom: 24,
   },
   resendText: {
     fontSize: 16,
     color: Colors.primary,
-    fontWeight: '600',
+    fontWeight: '600' as const,
   },
   resendTextDisabled: {
     color: Colors.textTertiary,
@@ -374,7 +324,33 @@ const styles = StyleSheet.create({
     minHeight: 80,
     justifyContent: 'center',
   },
-  loader: {
-    //
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+  },
+  successContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  successIcon: {
+    marginBottom: 24,
+  },
+  successTitle: {
+    fontSize: 24,
+    fontWeight: '700' as const,
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  successText: {
+    fontSize: 16,
+    color: Colors.textSecondary,
   },
 });
