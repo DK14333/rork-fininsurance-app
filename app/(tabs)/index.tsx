@@ -9,15 +9,7 @@ import {
   RefreshControl,
   Dimensions,
 } from 'react-native';
-import Svg, {
-  Circle,
-  Defs,
-  G,
-  Line,
-  LinearGradient,
-  Path,
-  Stop,
-} from 'react-native-svg';
+import Svg, { Circle, G, Line, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
@@ -297,10 +289,22 @@ export default function DashboardScreen() {
     const padTop = 18;
     const padBottom = 26;
 
-    const safePortfolio = chartSnapshots.map((s) => (Number.isFinite(s.portfolio_wert) ? s.portfolio_wert : 0));
-    const safeDeposits = chartSnapshots.map((s) => (Number.isFinite(s.eingezahlt_bis_dahin) ? s.eingezahlt_bis_dahin : 0));
+    const safePortfolio = chartSnapshots.map((s) =>
+      Number.isFinite(s.portfolio_wert) ? (s.portfolio_wert ?? 0) : 0
+    );
+    const safeDeposits = chartSnapshots.map((s) =>
+      Number.isFinite(s.eingezahlt_bis_dahin) ? (s.eingezahlt_bis_dahin ?? 0) : 0
+    );
 
-    const all = [...safePortfolio, ...safeDeposits];
+    const lastIndex = chartSnapshots.length - 1;
+
+    const currentValue = resolveCurrentValue();
+    const investedValue = resolveInvestedValue();
+
+    const portfolioValues = safePortfolio.map((v, i) => (i === lastIndex ? currentValue : v));
+    const depositsValues = safeDeposits.map((v, i) => (i === lastIndex ? investedValue : v));
+
+    const all = [...portfolioValues, ...depositsValues];
     const rawMin = Math.min(...all);
     const rawMax = Math.max(...all);
 
@@ -348,19 +352,11 @@ export default function DashboardScreen() {
       return d;
     };
 
-    const portfolioPath = makePath(safePortfolio);
-    const depositsPath = makePath(safeDeposits);
+    const portfolioPath = makePath(portfolioValues);
+    const depositsPath = makePath(depositsValues);
 
-    const lastIndex = chartSnapshots.length - 1;
     const lastX = xAt(lastIndex);
-    const lastY = yAt(safePortfolio[lastIndex] ?? 0);
-
-    const areaPath = (() => {
-      if (!portfolioPath) return '';
-      const firstX = xAt(0);
-      const baseY = padTop + innerH;
-      return `${portfolioPath} L ${lastX} ${baseY} L ${firstX} ${baseY} Z`;
-    })();
+    const lastY = yAt(portfolioValues[lastIndex] ?? 0);
 
     const ticks = 4;
     const tickValues = Array.from({ length: ticks }, (_, i) => {
@@ -380,24 +376,17 @@ export default function DashboardScreen() {
 
         <View style={styles.chartLegend}>
           <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: Colors.text }]} />
+            <View style={[styles.legendDot, { backgroundColor: '#5B616B' }]} />
             <Text style={styles.legendText}>Depotwert</Text>
           </View>
           <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: Colors.textTertiary }]} />
+            <View style={[styles.legendDot, { backgroundColor: '#A1A6AF' }]} />
             <Text style={styles.legendText}>Eingezahlt</Text>
           </View>
         </View>
 
         <View style={styles.chartWrapper}>
           <Svg width={chartWidth} height={chartHeight}>
-            <Defs>
-              <LinearGradient id="portfolioFill" x1="0" y1="0" x2="0" y2="1">
-                <Stop offset="0" stopColor={Colors.text} stopOpacity={0.14} />
-                <Stop offset="1" stopColor={Colors.text} stopOpacity={0.0} />
-              </LinearGradient>
-            </Defs>
-
             <G>
               {tickValues.map((v, i) => {
                 const y = yAt(v);
@@ -415,17 +404,15 @@ export default function DashboardScreen() {
               })}
             </G>
 
-            {!!areaPath && <Path d={areaPath} fill="url(#portfolioFill)" />}
-
             {!!depositsPath && (
               <Path
                 d={depositsPath}
                 fill="none"
-                stroke={Colors.textTertiary}
+                stroke="#A1A6AF"
                 strokeWidth={2}
-                strokeDasharray="6 6"
+                strokeDasharray="7 7"
                 strokeLinecap="round"
-                opacity={0.75}
+                opacity={0.95}
               />
             )}
 
@@ -433,14 +420,14 @@ export default function DashboardScreen() {
               <Path
                 d={portfolioPath}
                 fill="none"
-                stroke={Colors.text}
+                stroke="#5B616B"
                 strokeWidth={2.5}
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
             )}
 
-            <Circle cx={lastX} cy={lastY} r={5.5} fill={Colors.background} stroke={Colors.text} strokeWidth={2} />
+            <Circle cx={lastX} cy={lastY} r={5} fill={Colors.background} stroke="#5B616B" strokeWidth={2} />
           </Svg>
         </View>
 
