@@ -11,8 +11,7 @@ import {
 } from 'react-native';
 import Svg, { Circle, G, Line, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
+import { router, useFocusEffect } from 'expo-router';
 import {
   TrendingUp,
   TrendingDown,
