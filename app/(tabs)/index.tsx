@@ -317,59 +317,6 @@ export default function DashboardScreen() {
 
   const resolveCurrentValue = useCallback((): number => derivedCurrentValue, [derivedCurrentValue]);
 
-  const resolveInvestedValue = useCallback((): number => derivedInvestedValue, [derivedInvestedValue]);
-
-  const renderInvestedVsValue = () => {
-    if (!investment) return null;
-
-    const invested = resolveInvestedValue();
-    const current = resolveCurrentValue();
-    const delta = current - invested;
-    const deltaPct = invested > 0 ? (delta / invested) * 100 : 0;
-
-    const ratio = invested > 0 ? Math.min(1, current / invested) : 0;
-
-    return (
-      <View style={styles.valueCompareCard} testID="dashboard-invested-vs-value">
-        <View style={styles.valueCompareHeader}>
-          <Text style={styles.valueCompareTitle}>Eingezahlt vs. Depotwert</Text>
-          <View style={styles.valueComparePill}>
-            <Text style={styles.valueComparePillText}>{formatPercent(deltaPct)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.valueCompareNumbers}>
-          <View style={styles.valueCompareCol}>
-            <Text style={styles.valueCompareLabel}>Eingezahlt</Text>
-            <Text style={styles.valueCompareValue}>{formatCurrency(invested)}</Text>
-          </View>
-
-          <View style={styles.valueCompareDivider} />
-
-          <View style={styles.valueCompareCol}>
-            <Text style={styles.valueCompareLabel}>Depotwert</Text>
-            <Text style={styles.valueCompareValue}>{formatCurrency(current)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.valueCompareBar} testID="dashboard-invested-vs-value-bar">
-          <View style={[styles.valueCompareBarFill, { width: `${Math.max(0, Math.min(1, ratio)) * 100}%` }]} />
-        </View>
-
-        <Text
-          style={[
-            styles.valueCompareDelta,
-            { color: delta >= 0 ? Colors.text : Colors.error },
-          ]}
-          testID="dashboard-invested-vs-value-delta"
-        >
-          {delta >= 0 ? 'Gewinn ' : 'Verlust '}
-          {formatCurrency(Math.abs(delta))}
-        </Text>
-      </View>
-    );
-  };
-
   if (authLoading || !isAuthenticated) {
     return (
       <View style={styles.loadingContainer}>
@@ -392,21 +339,16 @@ export default function DashboardScreen() {
     const lastIndex = chartSnapshots.length - 1;
 
     const currentValue = resolveCurrentValue();
-    const investedValue = resolveInvestedValue();
 
     console.log('[Dashboard] chartSnapshots', {
       count: chartSnapshots.length,
       first: chartSnapshots[0]?.datum,
       last: chartSnapshots[lastIndex]?.datum,
       currentValue,
-      investedValue,
     });
 
     const portfolioRaw = chartSnapshots.map((s) =>
       Number.isFinite(s.portfolio_wert) ? (s.portfolio_wert ?? 0) : null
-    );
-    const depositsRaw = chartSnapshots.map((s) =>
-      Number.isFinite(s.eingezahlt_bis_dahin) ? (s.eingezahlt_bis_dahin ?? 0) : null
     );
 
     const forwardFill = (values: (number | null)[], fallbackFirst: number) => {
@@ -429,11 +371,8 @@ export default function DashboardScreen() {
     const portfolioValues = forwardFill(portfolioRaw, currentValue).map((v, i) =>
       i === lastIndex ? currentValue : v
     );
-    const depositsValues = forwardFill(depositsRaw, 0).map((v, i) =>
-      i === lastIndex ? investedValue : v
-    );
 
-    const all = [...portfolioValues, ...depositsValues].filter((v) => Number.isFinite(v));
+    const all = [...portfolioValues].filter((v) => Number.isFinite(v));
     const rawMin = all.length ? Math.min(...all) : 0;
     const rawMax = all.length ? Math.max(...all) : 1;
 
@@ -483,7 +422,6 @@ export default function DashboardScreen() {
     };
 
     const portfolioPath = makePath(portfolioValues);
-    const depositsPath = makePath(depositsValues);
 
     const lastX = xAt(lastIndex);
     const lastY = yAt(portfolioValues[lastIndex] ?? 0);
@@ -683,8 +621,6 @@ export default function DashboardScreen() {
                   </Text>
                 </View>
               </View>
-
-              {renderInvestedVsValue()}
 
               <View style={styles.investmentDetails}>
                 <View style={styles.detailRow}>
