@@ -85,62 +85,196 @@ export default function DashboardScreen() {
 
   const isDataLoading = investmentLoading || etfsLoading || snapshotsLoading;
 
-  const chartSnapshots = useMemo<PortfolioSnapshot[]>(() => {
-    if (snapshots.length === 0) return [];
+  const parseDateMs = useCallback((value: string | null | undefined): number => {
+    if (!value) return NaN;
 
-    const parseDateMs = (value: string | null | undefined): number => {
-      if (!value) return NaN;
+    const isoMs = Date.parse(value);
+    if (Number.isFinite(isoMs)) return isoMs;
 
-      const isoMs = Date.parse(value);
-      if (Number.isFinite(isoMs)) return isoMs;
-
-      const deMatch = value.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-      if (deMatch) {
-        const dd = Number(deMatch[1]);
-        const mm = Number(deMatch[2]);
-        const yyyy = Number(deMatch[3]);
-        if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
-          return Date.UTC(yyyy, mm - 1, dd);
-        }
+    const deMatch = value.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    if (deMatch) {
+      const dd = Number(deMatch[1]);
+      const mm = Number(deMatch[2]);
+      const yyyy = Number(deMatch[3]);
+      if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
+        return Date.UTC(yyyy, mm - 1, dd);
       }
+    }
 
-      return NaN;
-    };
+    return NaN;
+  }, []);
 
-    const last = snapshots[snapshots.length - 1];
+  const derivedCurrentValue = useMemo<number>(() => {
+    const snapLast = snapshots[snapshots.length - 1];
+    const fromSnapshots = Number.isFinite(snapLast?.portfolio_wert)
+      ? (snapLast?.portfolio_wert ?? 0)
+      : 0;
+    const fromInvestment = Number.isFinite(investment?.depotwert)
+      ? (investment?.depotwert ?? 0)
+      : 0;
+    return fromInvestment > 0 ? fromInvestment : fromSnapshots;
+  }, [investment?.depotwert, snapshots]);
 
-    const lastMs = parseDateMs(last.datum);
-    const startMs = investment ? parseDateMs(investment.startdatum) : NaN;
+  const derivedInvestedValue = useMemo<number>(() => {
+    const invNetto = Number.isFinite(investment?.eingezahlt_netto)
+      ? (investment?.eingezahlt_netto ?? 0)
+      : 0;
+    if (invNetto > 0) return invNetto;
+
+    const snapLast = snapshots[snapshots.length - 1];
+    const snapDeposits = Number.isFinite(snapLast?.eingezahlt_bis_dahin)
+      ? (snapLast?.eingezahlt_bis_dahin ?? 0)
+      : 0;
+    if (snapDeposits > 0) return snapDeposits;
+
+    const startMs = investment?.startdatum ? parseDateMs(investment.startdatum) : NaN;
+    const nowMs = Date.now();
+    const months = Number.isFinite(startMs)
+      ? Math.max(0, Math.floor((nowMs - startMs) / (30.44 * 24 * 60 * 60 * 1000)))
+      : 0;
+    const monthly = Number.isFinite(investment?.monatsbeitrag)
+      ? (investment?.monatsbeitrag ?? 0)
+      : 0;
+    const oneTime = Number.isFinite(investment?.einmalzahlung)
+      ? (investment?.einmalzahlung ?? 0)
+      : 0;
+
+    return monthly * months + oneTime;
+  }, [investment?.eingezahlt_netto, investment?.einmalzahlung, investment?.monatsbeitrag, investment?.startdatum, parseDateMs, snapshots]);
+
+  const chartSnapshots = useMemo<PortfolioSnapshot[]>(() => {
+    if (!investment) {
+      return snapshots;
+    }
 
     const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
-    const horizonStartMs = Number.isFinite(lastMs) ? lastMs - ONE_YEAR_MS : NaN;
+
+    const lastReal = snapshots[snapshots.length - 1];
+    const lastRealMs = parseDateMs(lastReal?.datum);
+    const endMs = Number.isFinite(lastRealMs) ? lastRealMs : Date.now();
+
+    const startMs = parseDateMs(investment.startdatum);
+    const horizonStartMs = endMs - ONE_YEAR_MS;
 
     const desiredStartMs = Number.isFinite(startMs)
-      ? Number.isFinite(horizonStartMs)
-        ? Math.max(startMs, horizonStartMs)
-        : startMs
+      ? Math.max(startMs, horizonStartMs)
       : horizonStartMs;
 
-    const filteredSnapshots = Number.isFinite(desiredStartMs)
-      ? snapshots.filter((s) => {
-          const ms = parseDateMs(s.datum);
-          return !Number.isFinite(ms) || ms >= desiredStartMs;
-        })
-      : snapshots;
+    const useSimulation = snapshots.length < 6;
+
+    if (useSimulation) {
+      const monthStart = (ms: number) => {
+        const d = new Date(ms);
+        return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+      };
+
+      const addMonthsUtc = (ms: number, months: number) => {
+        const d = new Date(ms);
+        return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1);
+      };
+
+      const endMonthMs = monthStart(endMs);
+      const startMonthMs = monthStart(desiredStartMs);
+
+      const pointsMs: number[] = [];
+      let cursor = startMonthMs;
+      while (cursor < endMonthMs) {
+        pointsMs.push(cursor);
+        cursor = addMonthsUtc(cursor, 1);
+      }
+      pointsMs.push(endMonthMs);
+
+      const oneTime = Number.isFinite(investment.einmalzahlung) ? investment.einmalzahlung : 0;
+      const monthly = Number.isFinite(investment.monatsbeitrag) ? investment.monatsbeitrag : 0;
+
+      const startDepositAtStart = oneTime;
+      const endDepositTarget = Math.max(0, derivedInvestedValue);
+
+      const monthsBetween = (aMs: number, bMs: number) => {
+        const a = new Date(aMs);
+        const b = new Date(bMs);
+        return (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
+      };
+
+      const monthsTotal = Number.isFinite(startMs)
+        ? Math.max(0, monthsBetween(startMs, endMonthMs))
+        : Math.max(0, pointsMs.length - 1);
+
+      const rawEnd = startDepositAtStart + monthly * monthsTotal;
+      const depositScale = rawEnd > 0 ? endDepositTarget / rawEnd : 1;
+
+      const currentTarget = Math.max(0, derivedCurrentValue);
+      const endInvested = Math.max(1, endDepositTarget);
+      const totalReturn = currentTarget / endInvested;
+
+      const growthFactor = Number.isFinite(totalReturn) ? totalReturn : 1;
+      const growthStrength = 1.65;
+
+      const makeDepositAt = (pointMs: number) => {
+        if (Number.isFinite(startMs)) {
+          if (pointMs < monthStart(startMs)) return 0;
+          const m = Math.max(0, monthsBetween(monthStart(startMs), pointMs));
+          const raw = startDepositAtStart + monthly * m;
+          return Math.max(0, raw * depositScale);
+        }
+
+        const idx = Math.max(0, pointsMs.indexOf(pointMs));
+        const raw = startDepositAtStart + monthly * idx;
+        return Math.max(0, raw * depositScale);
+      };
+
+      const simulated: PortfolioSnapshot[] = pointsMs.map((ms, i) => {
+        const iso = new Date(ms).toISOString().slice(0, 10);
+        const deposits = makeDepositAt(ms);
+        const progress = pointsMs.length <= 1 ? 1 : i / (pointsMs.length - 1);
+
+        const signedExtra = growthFactor - 1;
+        const extra = signedExtra * Math.pow(progress, growthStrength);
+        const portfolio = Math.max(0, deposits * (1 + extra));
+
+        const investedForPct = deposits > 0 ? deposits : 1;
+        const rendite = ((portfolio - deposits) / investedForPct) * 100;
+
+        return {
+          id: `synthetic-sim-${investment.id}-${iso}`,
+          kunde_email: investment.kunde_email,
+          datum: iso,
+          portfolio_wert: i === pointsMs.length - 1 ? currentTarget : portfolio,
+          eingezahlt_bis_dahin: i === pointsMs.length - 1 ? endDepositTarget : deposits,
+          rendite_prozent: i === pointsMs.length - 1 ? (investedForPct > 0 ? ((currentTarget - endDepositTarget) / investedForPct) * 100 : 0) : rendite,
+        };
+      });
+
+      console.log('[Dashboard] using simulated chart series', {
+        points: simulated.length,
+        start: simulated[0]?.datum,
+        end: simulated[simulated.length - 1]?.datum,
+        endDepositTarget,
+        currentTarget,
+        growthFactor,
+        depositScale,
+      });
+
+      return simulated;
+    }
+
+    const filteredSnapshots = snapshots.filter((s) => {
+      const ms = parseDateMs(s.datum);
+      return !Number.isFinite(ms) || ms >= desiredStartMs;
+    });
 
     const safeSnapshots = filteredSnapshots.length > 0 ? filteredSnapshots : snapshots;
-
     const safeFirst = safeSnapshots[0];
-    const safeFirstMs = parseDateMs(safeFirst.datum);
+    const safeFirstMs = parseDateMs(safeFirst?.datum);
 
-    if (!Number.isFinite(desiredStartMs) || !Number.isFinite(safeFirstMs)) return safeSnapshots;
+    if (!Number.isFinite(safeFirstMs)) return safeSnapshots;
     if (desiredStartMs >= safeFirstMs) return safeSnapshots;
 
     const desiredStartIso = new Date(desiredStartMs).toISOString().slice(0, 10);
 
     const startPoint: PortfolioSnapshot = {
-      id: `synthetic-horizon-${investment?.id ?? 'unknown'}`,
-      kunde_email: investment?.kunde_email ?? safeFirst.kunde_email,
+      id: `synthetic-horizon-${investment.id}`,
+      kunde_email: investment.kunde_email,
       datum: desiredStartIso,
       portfolio_wert: safeFirst.portfolio_wert,
       eingezahlt_bis_dahin: safeFirst.eingezahlt_bis_dahin,
@@ -148,7 +282,7 @@ export default function DashboardScreen() {
     };
 
     return [startPoint, ...safeSnapshots];
-  }, [investment, snapshots]);
+  }, [derivedCurrentValue, derivedInvestedValue, investment, parseDateMs, snapshots]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('de-DE', {
@@ -181,43 +315,9 @@ export default function DashboardScreen() {
     return 'Guten Abend';
   };
 
-  const resolveCurrentValue = useCallback((): number => {
-    const snapLast = snapshots[snapshots.length - 1];
-    const fromSnapshots = Number.isFinite(snapLast?.portfolio_wert)
-      ? (snapLast?.portfolio_wert ?? 0)
-      : 0;
-    const fromInvestment = Number.isFinite(investment?.depotwert)
-      ? (investment?.depotwert ?? 0)
-      : 0;
-    return fromInvestment > 0 ? fromInvestment : fromSnapshots;
-  }, [investment?.depotwert, snapshots]);
+  const resolveCurrentValue = useCallback((): number => derivedCurrentValue, [derivedCurrentValue]);
 
-  const resolveInvestedValue = useCallback((): number => {
-    const invNetto = Number.isFinite(investment?.eingezahlt_netto)
-      ? (investment?.eingezahlt_netto ?? 0)
-      : 0;
-    if (invNetto > 0) return invNetto;
-
-    const snapLast = snapshots[snapshots.length - 1];
-    const snapDeposits = Number.isFinite(snapLast?.eingezahlt_bis_dahin)
-      ? (snapLast?.eingezahlt_bis_dahin ?? 0)
-      : 0;
-    if (snapDeposits > 0) return snapDeposits;
-
-    const startMs = investment?.startdatum ? Date.parse(investment.startdatum) : NaN;
-    const nowMs = Date.now();
-    const months = Number.isFinite(startMs)
-      ? Math.max(0, Math.floor((nowMs - startMs) / (30.44 * 24 * 60 * 60 * 1000)))
-      : 0;
-    const monthly = Number.isFinite(investment?.monatsbeitrag)
-      ? (investment?.monatsbeitrag ?? 0)
-      : 0;
-    const oneTime = Number.isFinite(investment?.einmalzahlung)
-      ? (investment?.einmalzahlung ?? 0)
-      : 0;
-
-    return monthly * months + oneTime;
-  }, [investment?.eingezahlt_netto, investment?.einmalzahlung, investment?.monatsbeitrag, investment?.startdatum, snapshots]);
+  const resolveInvestedValue = useCallback((): number => derivedInvestedValue, [derivedInvestedValue]);
 
   const renderInvestedVsValue = () => {
     if (!investment) return null;
