@@ -85,29 +85,68 @@ export default function DashboardScreen() {
   const isDataLoading = investmentLoading || etfsLoading || snapshotsLoading;
 
   const chartSnapshots = useMemo<PortfolioSnapshot[]>(() => {
-    if (!investment) return snapshots;
     if (snapshots.length === 0) return [];
 
-    const first = snapshots[0];
-    const startMs = Number.isFinite(Date.parse(investment.startdatum))
-      ? Date.parse(investment.startdatum)
-      : NaN;
-    const firstMs = Number.isFinite(Date.parse(first.datum)) ? Date.parse(first.datum) : NaN;
+    const parseDateMs = (value: string | null | undefined): number => {
+      if (!value) return NaN;
 
-    if (!Number.isFinite(startMs) || !Number.isFinite(firstMs)) return snapshots;
-    if (startMs >= firstMs) return snapshots;
+      const isoMs = Date.parse(value);
+      if (Number.isFinite(isoMs)) return isoMs;
 
-    const baseEinzahlung = Math.max(0, investment.einmalzahlung ?? 0);
-    const startPoint: PortfolioSnapshot = {
-      id: `synthetic-start-${investment.id}`,
-      kunde_email: investment.kunde_email,
-      datum: investment.startdatum,
-      portfolio_wert: baseEinzahlung,
-      eingezahlt_bis_dahin: baseEinzahlung,
-      rendite_prozent: 0,
+      const deMatch = value.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+      if (deMatch) {
+        const dd = Number(deMatch[1]);
+        const mm = Number(deMatch[2]);
+        const yyyy = Number(deMatch[3]);
+        if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
+          return Date.UTC(yyyy, mm - 1, dd);
+        }
+      }
+
+      return NaN;
     };
 
-    return [startPoint, ...snapshots];
+    const last = snapshots[snapshots.length - 1];
+
+    const lastMs = parseDateMs(last.datum);
+    const startMs = investment ? parseDateMs(investment.startdatum) : NaN;
+
+    const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+    const horizonStartMs = Number.isFinite(lastMs) ? lastMs - ONE_YEAR_MS : NaN;
+
+    const desiredStartMs = Number.isFinite(startMs)
+      ? Number.isFinite(horizonStartMs)
+        ? Math.max(startMs, horizonStartMs)
+        : startMs
+      : horizonStartMs;
+
+    const filteredSnapshots = Number.isFinite(desiredStartMs)
+      ? snapshots.filter((s) => {
+          const ms = parseDateMs(s.datum);
+          return !Number.isFinite(ms) || ms >= desiredStartMs;
+        })
+      : snapshots;
+
+    const safeSnapshots = filteredSnapshots.length > 0 ? filteredSnapshots : snapshots;
+
+    const safeFirst = safeSnapshots[0];
+    const safeFirstMs = parseDateMs(safeFirst.datum);
+
+    if (!Number.isFinite(desiredStartMs) || !Number.isFinite(safeFirstMs)) return safeSnapshots;
+    if (desiredStartMs >= safeFirstMs) return safeSnapshots;
+
+    const desiredStartIso = new Date(desiredStartMs).toISOString().slice(0, 10);
+
+    const startPoint: PortfolioSnapshot = {
+      id: `synthetic-horizon-${investment?.id ?? 'unknown'}`,
+      kunde_email: investment?.kunde_email ?? safeFirst.kunde_email,
+      datum: desiredStartIso,
+      portfolio_wert: safeFirst.portfolio_wert,
+      eingezahlt_bis_dahin: safeFirst.eingezahlt_bis_dahin,
+      rendite_prozent: safeFirst.rendite_prozent,
+    };
+
+    return [startPoint, ...safeSnapshots];
   }, [investment, snapshots]);
 
   if (authLoading || !isAuthenticated) {
