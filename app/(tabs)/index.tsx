@@ -158,15 +158,6 @@ export default function DashboardScreen() {
     return [startPoint, ...safeSnapshots];
   }, [investment, snapshots]);
 
-  if (authLoading || !isAuthenticated) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.text} />
-        <Text style={styles.loadingText}>Laden...</Text>
-      </View>
-    );
-  }
-
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('de-DE', {
       style: 'currency',
@@ -197,6 +188,104 @@ export default function DashboardScreen() {
     if (hour < 18) return 'Guten Tag';
     return 'Guten Abend';
   };
+
+  const resolveCurrentValue = useCallback((): number => {
+    const snapLast = snapshots[snapshots.length - 1];
+    const fromSnapshots = Number.isFinite(snapLast?.portfolio_wert)
+      ? (snapLast?.portfolio_wert ?? 0)
+      : 0;
+    const fromInvestment = Number.isFinite(investment?.depotwert)
+      ? (investment?.depotwert ?? 0)
+      : 0;
+    return fromInvestment > 0 ? fromInvestment : fromSnapshots;
+  }, [investment?.depotwert, snapshots]);
+
+  const resolveInvestedValue = useCallback((): number => {
+    const invNetto = Number.isFinite(investment?.eingezahlt_netto)
+      ? (investment?.eingezahlt_netto ?? 0)
+      : 0;
+    if (invNetto > 0) return invNetto;
+
+    const snapLast = snapshots[snapshots.length - 1];
+    const snapDeposits = Number.isFinite(snapLast?.eingezahlt_bis_dahin)
+      ? (snapLast?.eingezahlt_bis_dahin ?? 0)
+      : 0;
+    if (snapDeposits > 0) return snapDeposits;
+
+    const startMs = investment?.startdatum ? Date.parse(investment.startdatum) : NaN;
+    const nowMs = Date.now();
+    const months = Number.isFinite(startMs)
+      ? Math.max(0, Math.floor((nowMs - startMs) / (30.44 * 24 * 60 * 60 * 1000)))
+      : 0;
+    const monthly = Number.isFinite(investment?.monatsbeitrag)
+      ? (investment?.monatsbeitrag ?? 0)
+      : 0;
+    const oneTime = Number.isFinite(investment?.einmalzahlung)
+      ? (investment?.einmalzahlung ?? 0)
+      : 0;
+
+    return monthly * months + oneTime;
+  }, [investment?.eingezahlt_netto, investment?.einmalzahlung, investment?.monatsbeitrag, investment?.startdatum, snapshots]);
+
+  const renderInvestedVsValue = () => {
+    if (!investment) return null;
+
+    const invested = resolveInvestedValue();
+    const current = resolveCurrentValue();
+    const delta = current - invested;
+    const deltaPct = invested > 0 ? (delta / invested) * 100 : 0;
+
+    const ratio = invested > 0 ? Math.min(1, current / invested) : 0;
+
+    return (
+      <View style={styles.valueCompareCard} testID="dashboard-invested-vs-value">
+        <View style={styles.valueCompareHeader}>
+          <Text style={styles.valueCompareTitle}>Eingezahlt vs. Depotwert</Text>
+          <View style={styles.valueComparePill}>
+            <Text style={styles.valueComparePillText}>{formatPercent(deltaPct)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.valueCompareNumbers}>
+          <View style={styles.valueCompareCol}>
+            <Text style={styles.valueCompareLabel}>Eingezahlt</Text>
+            <Text style={styles.valueCompareValue}>{formatCurrency(invested)}</Text>
+          </View>
+
+          <View style={styles.valueCompareDivider} />
+
+          <View style={styles.valueCompareCol}>
+            <Text style={styles.valueCompareLabel}>Depotwert</Text>
+            <Text style={styles.valueCompareValue}>{formatCurrency(current)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.valueCompareBar} testID="dashboard-invested-vs-value-bar">
+          <View style={[styles.valueCompareBarFill, { width: `${Math.max(0, Math.min(1, ratio)) * 100}%` }]} />
+        </View>
+
+        <Text
+          style={[
+            styles.valueCompareDelta,
+            { color: delta >= 0 ? Colors.text : Colors.error },
+          ]}
+          testID="dashboard-invested-vs-value-delta"
+        >
+          {delta >= 0 ? 'Gewinn ' : 'Verlust '}
+          {formatCurrency(Math.abs(delta))}
+        </Text>
+      </View>
+    );
+  };
+
+  if (authLoading || !isAuthenticated) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.text} />
+        <Text style={styles.loadingText}>Laden...</Text>
+      </View>
+    );
+  }
 
   const renderChart = () => {
     if (chartSnapshots.length === 0) return null;
@@ -478,6 +567,8 @@ export default function DashboardScreen() {
                 </View>
               </View>
 
+              {renderInvestedVsValue()}
+
               <View style={styles.investmentDetails}>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Produkt</Text>
@@ -634,6 +725,82 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700' as const,
     color: Colors.text,
+  },
+  valueCompareCard: {
+    marginHorizontal: 24,
+    backgroundColor: Colors.backgroundSecondary,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  valueCompareHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  valueCompareTitle: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    letterSpacing: -0.2,
+  },
+  valueComparePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  valueComparePillText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+  },
+  valueCompareNumbers: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  valueCompareCol: {
+    flex: 1,
+  },
+  valueCompareDivider: {
+    width: 1,
+    height: 34,
+    backgroundColor: Colors.border,
+    marginHorizontal: 12,
+  },
+  valueCompareLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 4,
+  },
+  valueCompareValue: {
+    fontSize: 18,
+    fontWeight: '700' as const,
+    color: Colors.text,
+  },
+  valueCompareBar: {
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    overflow: 'hidden',
+  },
+  valueCompareBarFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: Colors.text,
+    opacity: 0.85,
+  },
+  valueCompareDelta: {
+    marginTop: 10,
+    fontSize: 13,
+    fontWeight: '600' as const,
   },
   investmentDetails: {
     marginHorizontal: 24,
