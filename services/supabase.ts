@@ -3,8 +3,10 @@ import { AppState } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+// Trim ist wichtig, weil ein führendes Leerzeichen in .env (z.B. "= eyJ...")
+// sonst "Failed to fetch"/Auth-Probleme verursachen kann.
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim();
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
 console.log('SUPABASE_URL', SUPABASE_URL);
 console.log('HAS_KEY', !!SUPABASE_ANON_KEY);
