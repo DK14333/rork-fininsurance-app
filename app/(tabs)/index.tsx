@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -84,6 +84,32 @@ export default function DashboardScreen() {
 
   const isDataLoading = investmentLoading || etfsLoading || snapshotsLoading;
 
+  const chartSnapshots = useMemo<PortfolioSnapshot[]>(() => {
+    if (!investment) return snapshots;
+    if (snapshots.length === 0) return [];
+
+    const first = snapshots[0];
+    const startMs = Number.isFinite(Date.parse(investment.startdatum))
+      ? Date.parse(investment.startdatum)
+      : NaN;
+    const firstMs = Number.isFinite(Date.parse(first.datum)) ? Date.parse(first.datum) : NaN;
+
+    if (!Number.isFinite(startMs) || !Number.isFinite(firstMs)) return snapshots;
+    if (startMs >= firstMs) return snapshots;
+
+    const baseEinzahlung = Math.max(0, investment.einmalzahlung ?? 0);
+    const startPoint: PortfolioSnapshot = {
+      id: `synthetic-start-${investment.id}`,
+      kunde_email: investment.kunde_email,
+      datum: investment.startdatum,
+      portfolio_wert: baseEinzahlung,
+      eingezahlt_bis_dahin: baseEinzahlung,
+      rendite_prozent: 0,
+    };
+
+    return [startPoint, ...snapshots];
+  }, [investment, snapshots]);
+
   if (authLoading || !isAuthenticated) {
     return (
       <View style={styles.loadingContainer}>
@@ -125,14 +151,14 @@ export default function DashboardScreen() {
   };
 
   const renderChart = () => {
-    if (snapshots.length === 0) return null;
+    if (chartSnapshots.length === 0) return null;
 
     const chartHeight = 180;
     const chartWidth = SCREEN_WIDTH - 80;
     const padding = 20;
 
-    const values = snapshots.map(s => s.portfolio_wert);
-    const deposits = snapshots.map(s => s.eingezahlt_bis_dahin);
+    const values = chartSnapshots.map((s) => s.portfolio_wert);
+    const deposits = chartSnapshots.map((s) => s.eingezahlt_bis_dahin);
     const minValue = Math.min(...values, ...deposits) * 0.95;
     const maxValue = Math.max(...values, ...deposits) * 1.05;
     const range = maxValue - minValue || 1;
@@ -158,7 +184,7 @@ export default function DashboardScreen() {
         </View>
         <View style={styles.chartWrapper}>
           <View style={{ width: chartWidth, height: chartHeight }}>
-            {snapshots.length > 1 && (
+            {chartSnapshots.length > 1 && (
               <>
                 <View style={[styles.chartLine, { 
                   position: 'absolute',
@@ -167,17 +193,17 @@ export default function DashboardScreen() {
                   width: chartWidth,
                   height: chartHeight,
                 }]}>
-                  {snapshots.map((s, i) => {
+                  {chartSnapshots.map((s, i) => {
                     if (i === 0) return null;
-                    const x1 = padding + ((i - 1) / (snapshots.length - 1)) * (chartWidth - padding * 2);
-                    const y1 = getY(snapshots[i - 1].portfolio_wert);
-                    const x2 = padding + (i / (snapshots.length - 1)) * (chartWidth - padding * 2);
+                    const x1 = padding + ((i - 1) / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
+                    const y1 = getY(chartSnapshots[i - 1].portfolio_wert);
+                    const x2 = padding + (i / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
                     const y2 = getY(s.portfolio_wert);
                     const length = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
                     const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
                     return (
                       <View
-                        key={`portfolio-${i}`}
+                        key={`portfolio-${s.id || i}`}
                         style={{
                           position: 'absolute',
                           left: x1,
@@ -191,17 +217,17 @@ export default function DashboardScreen() {
                       />
                     );
                   })}
-                  {snapshots.map((s, i) => {
+                  {chartSnapshots.map((s, i) => {
                     if (i === 0) return null;
-                    const x1 = padding + ((i - 1) / (snapshots.length - 1)) * (chartWidth - padding * 2);
-                    const y1 = getY(snapshots[i - 1].eingezahlt_bis_dahin);
-                    const x2 = padding + (i / (snapshots.length - 1)) * (chartWidth - padding * 2);
+                    const x1 = padding + ((i - 1) / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
+                    const y1 = getY(chartSnapshots[i - 1].eingezahlt_bis_dahin);
+                    const x2 = padding + (i / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
                     const y2 = getY(s.eingezahlt_bis_dahin);
                     const length = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
                     const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
                     return (
                       <View
-                        key={`deposit-${i}`}
+                        key={`deposit-${s.id || i}`}
                         style={{
                           position: 'absolute',
                           left: x1,
@@ -217,12 +243,12 @@ export default function DashboardScreen() {
                     );
                   })}
                 </View>
-                {snapshots.map((s, i) => {
-                  const x = padding + (i / (snapshots.length - 1)) * (chartWidth - padding * 2);
+                {chartSnapshots.map((s, i) => {
+                  const x = padding + (i / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
                   const y = getY(s.portfolio_wert);
                   return (
                     <View
-                      key={`dot-${i}`}
+                      key={`dot-${s.id || i}`}
                       style={{
                         position: 'absolute',
                         left: x - 4,
@@ -239,10 +265,10 @@ export default function DashboardScreen() {
             )}
           </View>
         </View>
-        {snapshots.length > 0 && (
+        {chartSnapshots.length > 0 && (
           <View style={styles.chartDates}>
-            <Text style={styles.chartDateText}>{formatDate(snapshots[0].datum)}</Text>
-            <Text style={styles.chartDateText}>{formatDate(snapshots[snapshots.length - 1].datum)}</Text>
+            <Text style={styles.chartDateText}>{formatDate(chartSnapshots[0].datum)}</Text>
+            <Text style={styles.chartDateText}>{formatDate(chartSnapshots[chartSnapshots.length - 1].datum)}</Text>
           </View>
         )}
       </View>
