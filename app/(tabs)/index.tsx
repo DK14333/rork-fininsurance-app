@@ -351,6 +351,10 @@ export default function DashboardScreen() {
       Number.isFinite(s.portfolio_wert) ? (s.portfolio_wert ?? 0) : null
     );
 
+    const depositsRaw = chartSnapshots.map((s) =>
+      Number.isFinite(s.eingezahlt_bis_dahin) ? (s.eingezahlt_bis_dahin ?? 0) : null
+    );
+
     const forwardFill = (values: (number | null)[], fallbackFirst: number) => {
       const out: number[] = [];
       let last: number | null = null;
@@ -368,11 +372,15 @@ export default function DashboardScreen() {
       return out;
     };
 
+    const depositsFallback = Math.max(0, derivedInvestedValue);
+
     const portfolioValues = forwardFill(portfolioRaw, currentValue).map((v, i) =>
       i === lastIndex ? currentValue : v
     );
 
-    const all = [...portfolioValues].filter((v) => Number.isFinite(v));
+    const depositsValues = forwardFill(depositsRaw, depositsFallback);
+
+    const all = [...portfolioValues, ...depositsValues].filter((v) => Number.isFinite(v));
     const rawMin = all.length ? Math.min(...all) : 0;
     const rawMax = all.length ? Math.max(...all) : 1;
 
@@ -422,6 +430,7 @@ export default function DashboardScreen() {
     };
 
     const portfolioPath = makePath(portfolioValues);
+    const depositsPath = makePath(depositsValues);
 
     const lastX = xAt(lastIndex);
     const lastY = yAt(portfolioValues[lastIndex] ?? 0);
