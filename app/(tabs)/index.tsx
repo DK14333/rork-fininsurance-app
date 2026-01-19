@@ -9,6 +9,15 @@ import {
   RefreshControl,
   Dimensions,
 } from 'react-native';
+import Svg, {
+  Circle,
+  Defs,
+  G,
+  Line,
+  LinearGradient,
+  Path,
+  Stop,
+} from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
@@ -192,25 +201,94 @@ export default function DashboardScreen() {
   const renderChart = () => {
     if (chartSnapshots.length === 0) return null;
 
-    const chartHeight = 180;
+    const chartHeight = 200;
     const chartWidth = SCREEN_WIDTH - 80;
-    const padding = 20;
 
-    const values = chartSnapshots.map((s) => s.portfolio_wert);
-    const deposits = chartSnapshots.map((s) => s.eingezahlt_bis_dahin);
-    const minValue = Math.min(...values, ...deposits) * 0.95;
-    const maxValue = Math.max(...values, ...deposits) * 1.05;
+    const padX = 14;
+    const padTop = 18;
+    const padBottom = 26;
+
+    const safePortfolio = chartSnapshots.map((s) => (Number.isFinite(s.portfolio_wert) ? s.portfolio_wert : 0));
+    const safeDeposits = chartSnapshots.map((s) => (Number.isFinite(s.eingezahlt_bis_dahin) ? s.eingezahlt_bis_dahin : 0));
+
+    const all = [...safePortfolio, ...safeDeposits];
+    const rawMin = Math.min(...all);
+    const rawMax = Math.max(...all);
+
+    const span = rawMax - rawMin;
+    const minValue = rawMin - span * 0.08;
+    const maxValue = rawMax + span * 0.12;
     const range = maxValue - minValue || 1;
 
-    const getY = (value: number) => {
-      return chartHeight - padding - ((value - minValue) / range) * (chartHeight - padding * 2);
+    const innerW = Math.max(1, chartWidth - padX * 2);
+    const innerH = Math.max(1, chartHeight - padTop - padBottom);
+
+    const xAt = (index: number) => {
+      if (chartSnapshots.length <= 1) return padX + innerW / 2;
+      return padX + (index / (chartSnapshots.length - 1)) * innerW;
     };
 
+    const yAt = (value: number) => {
+      const t = (value - minValue) / range;
+      return padTop + (1 - t) * innerH;
+    };
 
+    const makePath = (values: number[]) => {
+      if (values.length === 0) return '';
+      const points = values.map((v, i) => ({ x: xAt(i), y: yAt(v) }));
+      if (points.length === 1) {
+        const p = points[0];
+        return `M ${p.x} ${p.y} L ${p.x} ${p.y}`;
+      }
+
+      const smooth = 0.18;
+      let d = `M ${points[0].x} ${points[0].y}`;
+      for (let i = 1; i < points.length; i++) {
+        const p0 = points[i - 1];
+        const p1 = points[i];
+        const pPrev = points[i - 2] ?? p0;
+        const pNext = points[i + 1] ?? p1;
+
+        const c1x = p0.x + (p1.x - pPrev.x) * smooth;
+        const c1y = p0.y + (p1.y - pPrev.y) * smooth;
+        const c2x = p1.x - (pNext.x - p0.x) * smooth;
+        const c2y = p1.y - (pNext.y - p0.y) * smooth;
+
+        d += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p1.x} ${p1.y}`;
+      }
+      return d;
+    };
+
+    const portfolioPath = makePath(safePortfolio);
+    const depositsPath = makePath(safeDeposits);
+
+    const lastIndex = chartSnapshots.length - 1;
+    const lastX = xAt(lastIndex);
+    const lastY = yAt(safePortfolio[lastIndex] ?? 0);
+
+    const areaPath = (() => {
+      if (!portfolioPath) return '';
+      const firstX = xAt(0);
+      const baseY = padTop + innerH;
+      return `${portfolioPath} L ${lastX} ${baseY} L ${firstX} ${baseY} Z`;
+    })();
+
+    const ticks = 4;
+    const tickValues = Array.from({ length: ticks }, (_, i) => {
+      const t = i / (ticks - 1);
+      const v = minValue + (1 - t) * range;
+      return v;
+    });
 
     return (
-      <View style={styles.chartContainer}>
-        <Text style={styles.chartTitle}>Portfolio Verlauf</Text>
+      <View style={styles.chartContainer} testID="dashboard-portfolio-chart">
+        <View style={styles.chartHeaderRow}>
+          <Text style={styles.chartTitle}>Portfolio Verlauf</Text>
+          <View style={styles.chartChip}>
+            <Text style={styles.chartChipText}>12M</Text>
+          </View>
+        </View>
+
         <View style={styles.chartLegend}>
           <View style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: Colors.text }]} />
@@ -221,95 +299,66 @@ export default function DashboardScreen() {
             <Text style={styles.legendText}>Eingezahlt</Text>
           </View>
         </View>
+
         <View style={styles.chartWrapper}>
-          <View style={{ width: chartWidth, height: chartHeight }}>
-            {chartSnapshots.length > 1 && (
-              <>
-                <View style={[styles.chartLine, { 
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: chartWidth,
-                  height: chartHeight,
-                }]}>
-                  {chartSnapshots.map((s, i) => {
-                    if (i === 0) return null;
-                    const x1 = padding + ((i - 1) / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
-                    const y1 = getY(chartSnapshots[i - 1].portfolio_wert);
-                    const x2 = padding + (i / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
-                    const y2 = getY(s.portfolio_wert);
-                    const length = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
-                    const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
-                    return (
-                      <View
-                        key={`portfolio-${s.id || i}`}
-                        style={{
-                          position: 'absolute',
-                          left: x1,
-                          top: y1,
-                          width: length,
-                          height: 2,
-                          backgroundColor: Colors.text,
-                          transform: [{ rotate: `${angle}deg` }],
-                          transformOrigin: 'left center',
-                        }}
-                      />
-                    );
-                  })}
-                  {chartSnapshots.map((s, i) => {
-                    if (i === 0) return null;
-                    const x1 = padding + ((i - 1) / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
-                    const y1 = getY(chartSnapshots[i - 1].eingezahlt_bis_dahin);
-                    const x2 = padding + (i / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
-                    const y2 = getY(s.eingezahlt_bis_dahin);
-                    const length = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
-                    const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
-                    return (
-                      <View
-                        key={`deposit-${s.id || i}`}
-                        style={{
-                          position: 'absolute',
-                          left: x1,
-                          top: y1,
-                          width: length,
-                          height: 2,
-                          backgroundColor: Colors.textTertiary,
-                          transform: [{ rotate: `${angle}deg` }],
-                          transformOrigin: 'left center',
-                          opacity: 0.6,
-                        }}
-                      />
-                    );
-                  })}
-                </View>
-                {chartSnapshots.map((s, i) => {
-                  const x = padding + (i / (chartSnapshots.length - 1)) * (chartWidth - padding * 2);
-                  const y = getY(s.portfolio_wert);
-                  return (
-                    <View
-                      key={`dot-${s.id || i}`}
-                      style={{
-                        position: 'absolute',
-                        left: x - 4,
-                        top: y - 4,
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        backgroundColor: Colors.text,
-                      }}
-                    />
-                  );
-                })}
-              </>
+          <Svg width={chartWidth} height={chartHeight}>
+            <Defs>
+              <LinearGradient id="portfolioFill" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0" stopColor={Colors.text} stopOpacity={0.14} />
+                <Stop offset="1" stopColor={Colors.text} stopOpacity={0.0} />
+              </LinearGradient>
+            </Defs>
+
+            <G>
+              {tickValues.map((v, i) => {
+                const y = yAt(v);
+                return (
+                  <Line
+                    key={`grid-${i}`}
+                    x1={padX}
+                    y1={y}
+                    x2={padX + innerW}
+                    y2={y}
+                    stroke={Colors.border}
+                    strokeWidth={1}
+                  />
+                );
+              })}
+            </G>
+
+            {!!areaPath && <Path d={areaPath} fill="url(#portfolioFill)" />}
+
+            {!!depositsPath && (
+              <Path
+                d={depositsPath}
+                fill="none"
+                stroke={Colors.textTertiary}
+                strokeWidth={2}
+                strokeDasharray="6 6"
+                strokeLinecap="round"
+                opacity={0.75}
+              />
             )}
-          </View>
+
+            {!!portfolioPath && (
+              <Path
+                d={portfolioPath}
+                fill="none"
+                stroke={Colors.text}
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
+
+            <Circle cx={lastX} cy={lastY} r={5.5} fill={Colors.background} stroke={Colors.text} strokeWidth={2} />
+          </Svg>
         </View>
-        {chartSnapshots.length > 0 && (
-          <View style={styles.chartDates}>
-            <Text style={styles.chartDateText}>{formatDate(chartSnapshots[0].datum)}</Text>
-            <Text style={styles.chartDateText}>{formatDate(chartSnapshots[chartSnapshots.length - 1].datum)}</Text>
-          </View>
-        )}
+
+        <View style={styles.chartDates}>
+          <Text style={styles.chartDateText}>{formatDate(chartSnapshots[0].datum)}</Text>
+          <Text style={styles.chartDateText}>{formatDate(chartSnapshots[chartSnapshots.length - 1].datum)}</Text>
+        </View>
       </View>
     );
   };
@@ -642,8 +691,33 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textSecondary,
   },
+  chartHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  chartChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  chartChipText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+    letterSpacing: 0.2,
+  },
   chartWrapper: {
     alignItems: 'center',
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
   },
   chartLine: {
     overflow: 'hidden',
