@@ -1,6 +1,9 @@
 import { supabase } from './supabase';
 import type { Investment, PortfolioSnapshot, InvestmentETF, PolicyBundle } from '../types';
 
+// Re-export, damit Screens den Typ aus '@/services/policies' importieren koennen.
+export type { PolicyBundle };
+
 /**
  * Supabase/PostgREST liefert "numeric" Felder oft als STRING zurück.
  * Wenn wir das nicht in Number umwandeln, wird im Chart Number.isFinite(...) false,
@@ -39,9 +42,11 @@ function normalizeInvestment(row: any): Investment {
 function normalizeSnapshot(row: any): PortfolioSnapshot {
   return {
     ...row,
-    portfolio_wert: toNumber(row.portfolio_wert) ?? null,
-    eingezahlt_bis_dahin: toNumber(row.eingezahlt_bis_dahin) ?? null,
-    rendite_prozent: toNumber(row.rendite_prozent) ?? null,
+    // Falls Supabase numerics als String liefert, wird hier sauber in Number gewandelt.
+    // Wenn ein Wert fehlt/ungueltig ist, verwenden wir 0, damit der Chart nicht "flach" wird.
+    portfolio_wert: toNumber(row.portfolio_wert) ?? 0,
+    eingezahlt_bis_dahin: toNumber(row.eingezahlt_bis_dahin) ?? 0,
+    rendite_prozent: toNumber(row.rendite_prozent) ?? 0,
   } as PortfolioSnapshot;
 }
 
@@ -94,4 +99,20 @@ export async function getPolicyBundleByEmail(email: string): Promise<PolicyBundl
     snapshots,
     etfs,
   };
+}
+
+/**
+ * React Query queryFn fuer das Dashboard.
+ * Holt den eingeloggten Supabase-User und laedt dann alle Portfolio-Daten anhand der E-Mail.
+ */
+export async function fetchPolicyBundle(): Promise<PolicyBundle> {
+  const { data, error } = await supabase.auth.getUser();
+  if (error) throw error;
+
+  const email = data?.user?.email;
+  if (!email) {
+    throw new Error('Kein eingeloggter User / keine Email vorhanden.');
+  }
+
+  return getPolicyBundleByEmail(email);
 }
