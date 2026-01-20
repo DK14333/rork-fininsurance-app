@@ -9,7 +9,7 @@ import {
   RefreshControl,
   Dimensions,
 } from 'react-native';
-import Svg, { Circle, G, Line, Path } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import {
@@ -272,6 +272,154 @@ export default function DashboardScreen() {
 
     const ratio = invested > 0 ? Math.min(1, current / invested) : 0;
 
+    const canShowHistory = chartSnapshots.length >= 2;
+
+    const renderMiniChart = () => {
+      if (!canShowHistory) return null;
+
+      const chartHeight = 140;
+      const chartWidth = SCREEN_WIDTH - 80;
+
+      const padX = 10;
+      const padTop = 10;
+      const padBottom = 16;
+
+      const lastIndex = chartSnapshots.length - 1;
+
+      const portfolioRaw = chartSnapshots.map((s) =>
+        Number.isFinite(s.portfolio_wert) ? (s.portfolio_wert ?? 0) : null
+      );
+      const depositsRaw = chartSnapshots.map((s) =>
+        Number.isFinite(s.eingezahlt_bis_dahin) ? (s.eingezahlt_bis_dahin ?? 0) : null
+      );
+
+      const forwardFill = (values: (number | null)[], fallbackFirst: number) => {
+        const out: number[] = [];
+        let last: number | null = null;
+        for (let i = 0; i < values.length; i++) {
+          const v = values[i];
+          if (typeof v === 'number' && Number.isFinite(v)) {
+            last = v;
+            out.push(v);
+          } else if (last !== null) {
+            out.push(last);
+          } else {
+            out.push(fallbackFirst);
+          }
+        }
+        return out;
+      };
+
+      const portfolioValues = forwardFill(portfolioRaw, current).map((v, i) =>
+        i === lastIndex ? current : v
+      );
+      const depositsValues = forwardFill(depositsRaw, invested).map((v, i) =>
+        i === lastIndex ? invested : v
+      );
+
+      const all = [...portfolioValues, ...depositsValues].filter((v) => Number.isFinite(v));
+      const rawMin = all.length ? Math.min(...all) : 0;
+      const rawMax = all.length ? Math.max(...all) : 1;
+
+      const span = rawMax - rawMin;
+      const pad = Math.max(1, Math.abs(rawMax) * 0.04, span * 0.12);
+      const minValue = rawMin - pad;
+      const maxValue = rawMax + pad;
+      const range = maxValue - minValue || 1;
+
+      const innerW = Math.max(1, chartWidth - padX * 2);
+      const innerH = Math.max(1, chartHeight - padTop - padBottom);
+
+      const xAt = (index: number) => {
+        if (chartSnapshots.length <= 1) return padX + innerW / 2;
+        return padX + (index / (chartSnapshots.length - 1)) * innerW;
+      };
+
+      const yAt = (value: number) => {
+        const t = (value - minValue) / range;
+        return padTop + (1 - t) * innerH;
+      };
+
+      const makePath = (values: number[]) => {
+        if (values.length === 0) return '';
+        const points = values.map((v, i) => ({ x: xAt(i), y: yAt(v) }));
+        if (points.length === 1) {
+          const p = points[0];
+          return `M ${p.x} ${p.y} L ${p.x} ${p.y}`;
+        }
+
+        const smooth = 0.18;
+        let d = `M ${points[0].x} ${points[0].y}`;
+        for (let i = 1; i < points.length; i++) {
+          const p0 = points[i - 1];
+          const p1 = points[i];
+          const pPrev = points[i - 2] ?? p0;
+          const pNext = points[i + 1] ?? p1;
+
+          const c1x = p0.x + (p1.x - pPrev.x) * smooth;
+          const c1y = p0.y + (p1.y - pPrev.y) * smooth;
+          const c2x = p1.x - (pNext.x - p0.x) * smooth;
+          const c2y = p1.y - (pNext.y - p0.y) * smooth;
+
+          d += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p1.x} ${p1.y}`;
+        }
+        return d;
+      };
+
+      const portfolioPath = makePath(portfolioValues);
+      const depositsPath = makePath(depositsValues);
+
+      const lastX = xAt(lastIndex);
+      const lastY = yAt(portfolioValues[lastIndex] ?? 0);
+
+      return (
+        <View style={styles.valueCompareChartWrap} testID="dashboard-invested-vs-value-chart">
+          <View style={styles.valueCompareLegend}>
+            <View style={styles.valueCompareLegendItem}>
+              <View style={[styles.valueCompareLegendDot, { backgroundColor: '#5B616B' }]} />
+              <Text style={styles.valueCompareLegendText}>Depotwert</Text>
+            </View>
+            <View style={styles.valueCompareLegendItem}>
+              <View style={[styles.valueCompareLegendDot, { backgroundColor: '#A1A6AF' }]} />
+              <Text style={styles.valueCompareLegendText}>Eingezahlt</Text>
+            </View>
+          </View>
+
+          <Svg width={chartWidth} height={chartHeight}>
+            {!!depositsPath && (
+              <Path
+                d={depositsPath}
+                fill="none"
+                stroke="#A1A6AF"
+                strokeWidth={2}
+                strokeDasharray="7 7"
+                strokeLinecap="round"
+                opacity={0.95}
+              />
+            )}
+
+            {!!portfolioPath && (
+              <Path
+                d={portfolioPath}
+                fill="none"
+                stroke="#5B616B"
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
+
+            <Circle cx={lastX} cy={lastY} r={5} fill={Colors.background} stroke="#5B616B" strokeWidth={2} />
+          </Svg>
+
+          <View style={styles.valueCompareChartDates}>
+            <Text style={styles.valueCompareChartDateText}>{formatDate(chartSnapshots[0].datum)}</Text>
+            <Text style={styles.valueCompareChartDateText}>{formatDate(chartSnapshots[chartSnapshots.length - 1].datum)}</Text>
+          </View>
+        </View>
+      );
+    };
+
     return (
       <View style={styles.valueCompareCard} testID="dashboard-invested-vs-value">
         <View style={styles.valueCompareHeader}>
@@ -280,6 +428,8 @@ export default function DashboardScreen() {
             <Text style={styles.valueComparePillText}>{formatPercent(deltaPct)}</Text>
           </View>
         </View>
+
+        {renderMiniChart()}
 
         <View style={styles.valueCompareNumbers}>
           <View style={styles.valueCompareCol}>
@@ -322,209 +472,7 @@ export default function DashboardScreen() {
     );
   }
 
-  const renderChart = () => {
-    if (chartSnapshots.length === 0) {
-      return (
-        <View style={styles.chartContainer} testID="dashboard-portfolio-chart-empty">
-          <View style={styles.chartHeaderRow}>
-            <Text style={styles.chartTitle}>Portfolio Verlauf</Text>
-            <View style={styles.chartChip}>
-              <Text style={styles.chartChipText}>12M</Text>
-            </View>
-          </View>
-          <Text style={styles.sectionSubtext}>
-            Noch keine Historie – Chart startet nach dem nächsten Tagesupdate.
-          </Text>
-        </View>
-      );
-    }
 
-    const chartHeight = 200;
-    const chartWidth = SCREEN_WIDTH - 80;
-
-    const padX = 14;
-    const padTop = 18;
-    const padBottom = 26;
-
-    const lastIndex = chartSnapshots.length - 1;
-
-    const currentValue = resolveCurrentValue();
-    const investedValue = resolveInvestedValue();
-
-    console.log('[Dashboard] chartSnapshots', {
-      count: chartSnapshots.length,
-      first: chartSnapshots[0]?.datum,
-      last: chartSnapshots[lastIndex]?.datum,
-      currentValue,
-      investedValue,
-    });
-
-    const portfolioRaw = chartSnapshots.map((s) =>
-      Number.isFinite(s.portfolio_wert) ? (s.portfolio_wert ?? 0) : null
-    );
-    const depositsRaw = chartSnapshots.map((s) =>
-      Number.isFinite(s.eingezahlt_bis_dahin) ? (s.eingezahlt_bis_dahin ?? 0) : null
-    );
-
-    const forwardFill = (values: (number | null)[], fallbackFirst: number) => {
-      const out: number[] = [];
-      let last: number | null = null;
-      for (let i = 0; i < values.length; i++) {
-        const v = values[i];
-        if (typeof v === 'number' && Number.isFinite(v)) {
-          last = v;
-          out.push(v);
-        } else if (last !== null) {
-          out.push(last);
-        } else {
-          out.push(fallbackFirst);
-        }
-      }
-      return out;
-    };
-
-    const portfolioValues = forwardFill(portfolioRaw, currentValue).map((v, i) =>
-      i === lastIndex ? currentValue : v
-    );
-    const depositsValues = forwardFill(depositsRaw, 0).map((v, i) =>
-      i === lastIndex ? investedValue : v
-    );
-
-    const all = [...portfolioValues, ...depositsValues].filter((v) => Number.isFinite(v));
-    const rawMin = all.length ? Math.min(...all) : 0;
-    const rawMax = all.length ? Math.max(...all) : 1;
-
-    const span = rawMax - rawMin;
-    const pad = Math.max(1, Math.abs(rawMax) * 0.04, span * 0.12);
-    const minValue = rawMin - pad;
-    const maxValue = rawMax + pad;
-    const range = maxValue - minValue || 1;
-
-    const innerW = Math.max(1, chartWidth - padX * 2);
-    const innerH = Math.max(1, chartHeight - padTop - padBottom);
-
-    const xAt = (index: number) => {
-      if (chartSnapshots.length <= 1) return padX + innerW / 2;
-      return padX + (index / (chartSnapshots.length - 1)) * innerW;
-    };
-
-    const yAt = (value: number) => {
-      const t = (value - minValue) / range;
-      return padTop + (1 - t) * innerH;
-    };
-
-    const makePath = (values: number[]) => {
-      if (values.length === 0) return '';
-      const points = values.map((v, i) => ({ x: xAt(i), y: yAt(v) }));
-      if (points.length === 1) {
-        const p = points[0];
-        return `M ${p.x} ${p.y} L ${p.x} ${p.y}`;
-      }
-
-      const smooth = 0.18;
-      let d = `M ${points[0].x} ${points[0].y}`;
-      for (let i = 1; i < points.length; i++) {
-        const p0 = points[i - 1];
-        const p1 = points[i];
-        const pPrev = points[i - 2] ?? p0;
-        const pNext = points[i + 1] ?? p1;
-
-        const c1x = p0.x + (p1.x - pPrev.x) * smooth;
-        const c1y = p0.y + (p1.y - pPrev.y) * smooth;
-        const c2x = p1.x - (pNext.x - p0.x) * smooth;
-        const c2y = p1.y - (pNext.y - p0.y) * smooth;
-
-        d += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p1.x} ${p1.y}`;
-      }
-      return d;
-    };
-
-    const portfolioPath = makePath(portfolioValues);
-    const depositsPath = makePath(depositsValues);
-
-    const lastX = xAt(lastIndex);
-    const lastY = yAt(portfolioValues[lastIndex] ?? 0);
-
-    const ticks = 4;
-    const tickValues = Array.from({ length: ticks }, (_, i) => {
-      const t = i / (ticks - 1);
-      const v = minValue + (1 - t) * range;
-      return v;
-    });
-
-    return (
-      <View style={styles.chartContainer} testID="dashboard-portfolio-chart">
-        <View style={styles.chartHeaderRow}>
-          <Text style={styles.chartTitle}>Portfolio Verlauf</Text>
-          <View style={styles.chartChip}>
-            <Text style={styles.chartChipText}>12M</Text>
-          </View>
-        </View>
-
-        <View style={styles.chartLegend}>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#5B616B' }]} />
-            <Text style={styles.legendText}>Depotwert</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#A1A6AF' }]} />
-            <Text style={styles.legendText}>Eingezahlt</Text>
-          </View>
-        </View>
-
-        <View style={styles.chartWrapper}>
-          <Svg width={chartWidth} height={chartHeight}>
-            <G>
-              {tickValues.map((v, i) => {
-                const y = yAt(v);
-                return (
-                  <Line
-                    key={`grid-${i}`}
-                    x1={padX}
-                    y1={y}
-                    x2={padX + innerW}
-                    y2={y}
-                    stroke={Colors.border}
-                    strokeWidth={1}
-                  />
-                );
-              })}
-            </G>
-
-            {!!depositsPath && (
-              <Path
-                d={depositsPath}
-                fill="none"
-                stroke="#A1A6AF"
-                strokeWidth={2}
-                strokeDasharray="7 7"
-                strokeLinecap="round"
-                opacity={0.95}
-              />
-            )}
-
-            {!!portfolioPath && (
-              <Path
-                d={portfolioPath}
-                fill="none"
-                stroke="#5B616B"
-                strokeWidth={2.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            )}
-
-            <Circle cx={lastX} cy={lastY} r={5} fill={Colors.background} stroke="#5B616B" strokeWidth={2} />
-          </Svg>
-        </View>
-
-        <View style={styles.chartDates}>
-          <Text style={styles.chartDateText}>{formatDate(chartSnapshots[0].datum)}</Text>
-          <Text style={styles.chartDateText}>{formatDate(chartSnapshots[chartSnapshots.length - 1].datum)}</Text>
-        </View>
-      </View>
-    );
-  };
 
   const renderETFAllocation = () => {
     if (etfs.length === 0) {
@@ -687,7 +635,6 @@ export default function DashboardScreen() {
                 </View>
               </View>
 
-              {renderChart()}
               {renderETFAllocation()}
 
               <TouchableOpacity
@@ -860,6 +807,53 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600' as const,
     color: Colors.textSecondary,
+  },
+  valueCompareChartWrap: {
+    marginBottom: 14,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+  },
+  valueCompareLegend: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 8,
+    backgroundColor: Colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  valueCompareLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  valueCompareLegendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  valueCompareLegendText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+  },
+  valueCompareChartDates: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    paddingTop: 6,
+    backgroundColor: Colors.background,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
+  },
+  valueCompareChartDateText: {
+    fontSize: 11,
+    color: Colors.textTertiary,
   },
   valueCompareNumbers: {
     flexDirection: 'row',
