@@ -1,48 +1,100 @@
-import React, { useEffect, useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
   ActivityIndicator,
-  RefreshControl,
   Dimensions,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import Svg, { Circle, Path } from 'react-native-svg';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Path } from 'react-native-svg';
 import { router, useFocusEffect } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import {
-  TrendingUp,
+  Calendar,
+  RefreshCw,
   TrendingDown,
+  TrendingUp,
   Wallet,
   PiggyBank,
-  RefreshCw,
-  Clock,
-  Calendar,
-  CreditCard,
 } from 'lucide-react-native';
-import { useQuery } from '@tanstack/react-query';
+
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { Investment, InvestmentETF, PortfolioSnapshot } from '@/types';
+import type { Investment, InvestmentETF, PortfolioSnapshot } from '@/types';
 import { fetchPolicyBundle } from '@/services/policies';
 import type { PolicyBundle } from '@/services/policies';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value);
+}
+function formatPercent(value: number) {
+  const sign = value >= 0 ? '+' : '';
+  return `${sign}${value.toFixed(2)}%`;
+}
+function formatDate(dateStr: string) {
+  try {
+    return new Date(dateStr).toLocaleDateString('de-DE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+  } catch {
+    return dateStr;
+  }
+}
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Guten Morgen';
+  if (hour < 18) return 'Guten Tag';
+  return 'Guten Abend';
+}
+
+/**
+ * PostgREST/Supabase liefert numeric-Felder oft als STRING.
+ * Damit Charts nicht "flach" werden: immer sauber in Number umwandeln.
+ */
+function toNum(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string') {
+    const cleaned = v.trim().replace(/\s/g, '').replace(',', '.');
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function makeLinePath(points: { x: number; y: number }[]) {
+  if (points.length === 0) return '';
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length; i++) {
+    d += ` L ${points[i].x} ${points[i].y}`;
+  }
+  return d;
+}
+
 export default function DashboardScreen() {
   const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
+  const [refreshing, setRefreshing] = useState(false);
 
+  const userEmail = useMemo(() => user?.email?.toLowerCase().trim() ?? '', [user?.email]);
+
+  // ✅ FIX für "Missing queryFn": queryFn ist gesetzt
   const {
     data: bundle,
     isLoading: bundleLoading,
     error: bundleError,
     refetch: refetchBundle,
   } = useQuery<PolicyBundle>({
-    queryKey: ['policy_bundle'],
+    queryKey: ['policy_bundle', userEmail],
     queryFn: fetchPolicyBundle,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !!userEmail,
     staleTime: 0,
     gcTime: 1000 * 60 * 10,
     refetchOnMount: 'always',
@@ -50,54 +102,19 @@ export default function DashboardScreen() {
     refetchOnWindowFocus: true,
   });
 
-  const investment = useMemo<Investment | null>(() => {
-    return (bundle?.investment ?? null) as Investment | null;
-  }, [bundle?.investment]);
-
-  const etfs = useMemo<InvestmentETF[]>(() => {
-    return (bundle?.etfs ?? []) as InvestmentETF[];
-  }, [bundle?.etfs]);
-
-  const snapshots = useMemo<PortfolioSnapshot[]>(() => {
-    return (bundle?.snapshots ?? []) as PortfolioSnapshot[];
-  }, [bundle?.snapshots]);
-
-  const [refreshing, setRefreshing] = React.useState<boolean>(false);
+  const investment = useMemo<Investment | null>(() => (bundle?.investment ?? null) as any, [bundle]);
+  const etfs = useMemo<InvestmentETF[]>(() => ((bundle?.etfs ?? []) as any) ?? [], [bundle]);
+  const snapshots = useMemo<PortfolioSnapshot[]>(() => ((bundle?.snapshots ?? []) as any) ?? [], [bundle]);
 
   const loadPortfolio = useCallback(async () => {
-    try {
-      console.log('[Dashboard] loadPortfolio start', {
-        isAuthenticated,
-        authEmail: user?.email,
-      });
-
-      const result = await refetchBundle();
-
-      if (result.error) {
-        console.log('[Dashboard] loadPortfolio error', {
-          message: (result.error as any)?.message,
-          status: (result.error as any)?.status,
-        });
-
-        const status = (result.error as any)?.status;
-        if (status === 401 || status === 403) {
-          await logout();
-          router.replace('/login');
-        }
-      } else {
-        console.log('[Dashboard] loadPortfolio ok', {
-          email: result.data?.email,
-          hasInvestment: !!result.data?.investment,
-          etfs: result.data?.etfs?.length ?? 0,
-          snaps: result.data?.snapshots?.length ?? 0,
-        });
-      }
-    } catch (e) {
-      console.log('[Dashboard] loadPortfolio catch', {
-        message: (e as any)?.message,
-      });
+    const res = await refetchBundle();
+    // bei 401/403: ausloggen und zurück zu login
+    const status = (res.error as any)?.status;
+    if (status === 401 || status === 403) {
+      await logout();
+      router.replace('/login');
     }
-  }, [isAuthenticated, logout, refetchBundle, user?.email]);
+  }, [logout, refetchBundle]);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -113,9 +130,7 @@ export default function DashboardScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (isAuthenticated) {
-        loadPortfolio();
-      }
+      if (isAuthenticated) loadPortfolio();
       return () => {};
     }, [isAuthenticated, loadPortfolio])
   );
@@ -126,575 +141,346 @@ export default function DashboardScreen() {
     setRefreshing(false);
   }, [loadPortfolio]);
 
-  const isDataLoading = bundleLoading;
-
-  const chartSnapshots = useMemo<PortfolioSnapshot[]>(() => {
-    if (snapshots.length === 0) return [];
-
-    const parseDateMs = (value: string | null | undefined): number => {
-      if (!value) return NaN;
-
-      const isoMs = Date.parse(value);
-      if (Number.isFinite(isoMs)) return isoMs;
-
-      const deMatch = value.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-      if (deMatch) {
-        const dd = Number(deMatch[1]);
-        const mm = Number(deMatch[2]);
-        const yyyy = Number(deMatch[3]);
-        if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
-          return Date.UTC(yyyy, mm - 1, dd);
-        }
-      }
-
-      return NaN;
-    };
-
+  // ---------- Werte berechnen ----------
+  const currentValue = useMemo(() => {
+    // bevorzugt: investment.depotwert, sonst letzter snapshot.portfolio_wert
+    const inv = toNum((investment as any)?.depotwert) ?? 0;
     const last = snapshots[snapshots.length - 1];
-
-    const lastMs = parseDateMs(last.datum);
-    const startMs = investment ? parseDateMs(investment.startdatum) : NaN;
-
-    const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
-    const horizonStartMs = Number.isFinite(lastMs) ? lastMs - ONE_YEAR_MS : NaN;
-
-    const desiredStartMs = Number.isFinite(startMs)
-      ? Number.isFinite(horizonStartMs)
-        ? Math.max(startMs, horizonStartMs)
-        : startMs
-      : horizonStartMs;
-
-    const filteredSnapshots = Number.isFinite(desiredStartMs)
-      ? snapshots.filter((s) => {
-          const ms = parseDateMs(s.datum);
-          return !Number.isFinite(ms) || ms >= desiredStartMs;
-        })
-      : snapshots;
-
-    const safeSnapshots = filteredSnapshots.length > 0 ? filteredSnapshots : snapshots;
-
-    const safeFirst = safeSnapshots[0];
-    const safeFirstMs = parseDateMs(safeFirst.datum);
-
-    if (!Number.isFinite(desiredStartMs) || !Number.isFinite(safeFirstMs)) return safeSnapshots;
-    if (desiredStartMs >= safeFirstMs) return safeSnapshots;
-
-    const desiredStartIso = new Date(desiredStartMs).toISOString().slice(0, 10);
-
-    const startPoint: PortfolioSnapshot = {
-      id: `synthetic-horizon-${investment?.id ?? 'unknown'}`,
-      kunde_email: investment?.kunde_email ?? safeFirst.kunde_email,
-      datum: desiredStartIso,
-      portfolio_wert: safeFirst.portfolio_wert,
-      eingezahlt_bis_dahin: safeFirst.eingezahlt_bis_dahin,
-      rendite_prozent: safeFirst.rendite_prozent,
-    };
-
-    return [startPoint, ...safeSnapshots];
+    const snap = toNum((last as any)?.portfolio_wert) ?? 0;
+    return inv > 0 ? inv : snap;
   }, [investment, snapshots]);
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('de-DE', {
-      style: 'currency',
-      currency: 'EUR',
-    }).format(value);
-  };
+  const investedValue = useMemo(() => {
+    // bevorzugt: investment.eingezahlt_netto, sonst letzter snapshot.eingezahlt_bis_dahin, sonst grobe Schätzung
+    const invNet = toNum((investment as any)?.eingezahlt_netto);
+    if (invNet && invNet > 0) return invNet;
 
-  const formatPercent = (value: number) => {
-    const sign = value >= 0 ? '+' : '';
-    return `${sign}${value.toFixed(2)}%`;
-  };
+    const last = snapshots[snapshots.length - 1];
+    const snapPaid = toNum((last as any)?.eingezahlt_bis_dahin);
+    if (snapPaid && snapPaid > 0) return snapPaid;
 
-  const formatDate = (dateStr: string) => {
-    try {
-      return new Date(dateStr).toLocaleDateString('de-DE', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      });
-    } catch {
-      return dateStr;
-    }
-  };
+    const monthly = toNum((investment as any)?.monatsbeitrag) ?? 0;
+    const oneTime = toNum((investment as any)?.einmalzahlung) ?? 0;
 
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Guten Morgen';
-    if (hour < 18) return 'Guten Tag';
-    return 'Guten Abend';
-  };
-
-  const resolveCurrentValue = useCallback((): number => {
-    const snapLast = snapshots[snapshots.length - 1];
-    const fromSnapshots = Number.isFinite(snapLast?.portfolio_wert)
-      ? (snapLast?.portfolio_wert ?? 0)
-      : 0;
-    const fromInvestment = Number.isFinite(investment?.depotwert)
-      ? (investment?.depotwert ?? 0)
-      : 0;
-    return fromInvestment > 0 ? fromInvestment : fromSnapshots;
-  }, [investment?.depotwert, snapshots]);
-
-  const resolveInvestedValue = useCallback((): number => {
-    const invNetto = Number.isFinite(investment?.eingezahlt_netto)
-      ? (investment?.eingezahlt_netto ?? 0)
-      : 0;
-    if (invNetto > 0) return invNetto;
-
-    const snapLast = snapshots[snapshots.length - 1];
-    const snapDeposits = Number.isFinite(snapLast?.eingezahlt_bis_dahin)
-      ? (snapLast?.eingezahlt_bis_dahin ?? 0)
-      : 0;
-    if (snapDeposits > 0) return snapDeposits;
-
-    const startMs = investment?.startdatum ? Date.parse(investment.startdatum) : NaN;
-    const nowMs = Date.now();
-    const months = Number.isFinite(startMs)
-      ? Math.max(0, Math.floor((nowMs - startMs) / (30.44 * 24 * 60 * 60 * 1000)))
-      : 0;
-    const monthly = Number.isFinite(investment?.monatsbeitrag)
-      ? (investment?.monatsbeitrag ?? 0)
-      : 0;
-    const oneTime = Number.isFinite(investment?.einmalzahlung)
-      ? (investment?.einmalzahlung ?? 0)
+    const start = (investment as any)?.startdatum ? Date.parse((investment as any).startdatum) : NaN;
+    const months = Number.isFinite(start)
+      ? Math.max(0, Math.floor((Date.now() - start) / (30.44 * 24 * 60 * 60 * 1000)))
       : 0;
 
     return monthly * months + oneTime;
-  }, [investment?.eingezahlt_netto, investment?.einmalzahlung, investment?.monatsbeitrag, investment?.startdatum, snapshots]);
+  }, [investment, snapshots]);
 
-  const renderInvestedVsValue = () => {
-    if (!investment) return null;
+  const delta = useMemo(() => currentValue - investedValue, [currentValue, investedValue]);
+  const deltaPct = useMemo(() => (investedValue > 0 ? (delta / investedValue) * 100 : 0), [delta, investedValue]);
 
-    const invested = resolveInvestedValue();
-    const current = resolveCurrentValue();
-    const delta = current - invested;
-    const deltaPct = invested > 0 ? (delta / invested) * 100 : 0;
+  // ---------- Chart Daten (letzte 12 Monate, falls vorhanden) ----------
+  const chartData = useMemo(() => {
+    if (snapshots.length < 2) return null;
 
-    const ratio = invested > 0 ? Math.min(1, current / invested) : 0;
+    // sort by datum ascending (safety)
+    const sorted = [...snapshots].sort((a: any, b: any) => {
+      const am = Date.parse(a.datum);
+      const bm = Date.parse(b.datum);
+      return (Number.isFinite(am) ? am : 0) - (Number.isFinite(bm) ? bm : 0);
+    });
 
-    const canShowHistory = chartSnapshots.length >= 2;
+    // filter last 12 months
+    const last = sorted[sorted.length - 1] as any;
+    const lastMs = Date.parse(last.datum);
+    const yearAgo = Number.isFinite(lastMs) ? lastMs - 365 * 24 * 60 * 60 * 1000 : NaN;
+    const filtered = Number.isFinite(yearAgo)
+      ? sorted.filter((s: any) => {
+          const ms = Date.parse(s.datum);
+          return !Number.isFinite(ms) || ms >= yearAgo;
+        })
+      : sorted;
 
-    const renderMiniChart = () => {
-      if (!canShowHistory) return null;
+    // ✅ FIX für flache Linien: numeric -> Number() + finite check
+    const portfolio = filtered.map((s: any) => toNum(s.portfolio_wert));
+    const paid = filtered.map((s: any) => toNum(s.eingezahlt_bis_dahin));
 
-      const chartHeight = 140;
-      const chartWidth = SCREEN_WIDTH - 80;
-
-      const padX = 10;
-      const padTop = 10;
-      const padBottom = 16;
-
-      const lastIndex = chartSnapshots.length - 1;
-
-      const portfolioRaw = chartSnapshots.map((s) =>
-        Number.isFinite(s.portfolio_wert) ? (s.portfolio_wert ?? 0) : null
-      );
-      const depositsRaw = chartSnapshots.map((s) =>
-        Number.isFinite(s.eingezahlt_bis_dahin) ? (s.eingezahlt_bis_dahin ?? 0) : null
-      );
-
-      const forwardFill = (values: (number | null)[], fallbackFirst: number) => {
-        const out: number[] = [];
-        let last: number | null = null;
-        for (let i = 0; i < values.length; i++) {
-          const v = values[i];
-          if (typeof v === 'number' && Number.isFinite(v)) {
-            last = v;
-            out.push(v);
-          } else if (last !== null) {
-            out.push(last);
-          } else {
-            out.push(fallbackFirst);
-          }
+    // forward-fill damit missing points nicht alles zerstören
+    const ff = (arr: (number | null)[], fallbackFirst: number) => {
+      const out: number[] = [];
+      let lastVal: number | null = null;
+      for (const v of arr) {
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          lastVal = v;
+          out.push(v);
+        } else if (lastVal !== null) {
+          out.push(lastVal);
+        } else {
+          out.push(fallbackFirst);
         }
-        return out;
-      };
-
-      const portfolioValues = forwardFill(portfolioRaw, current).map((v, i) =>
-        i === lastIndex ? current : v
-      );
-      const depositsValues = forwardFill(depositsRaw, invested).map((v, i) =>
-        i === lastIndex ? invested : v
-      );
-
-      const all = [...portfolioValues, ...depositsValues].filter((v) => Number.isFinite(v));
-      const rawMin = all.length ? Math.min(...all) : 0;
-      const rawMax = all.length ? Math.max(...all) : 1;
-
-      const span = rawMax - rawMin;
-      const pad = Math.max(1, Math.abs(rawMax) * 0.04, span * 0.12);
-      const minValue = rawMin - pad;
-      const maxValue = rawMax + pad;
-      const range = maxValue - minValue || 1;
-
-      const innerW = Math.max(1, chartWidth - padX * 2);
-      const innerH = Math.max(1, chartHeight - padTop - padBottom);
-
-      const xAt = (index: number) => {
-        if (chartSnapshots.length <= 1) return padX + innerW / 2;
-        return padX + (index / (chartSnapshots.length - 1)) * innerW;
-      };
-
-      const yAt = (value: number) => {
-        const t = (value - minValue) / range;
-        return padTop + (1 - t) * innerH;
-      };
-
-      const makePath = (values: number[]) => {
-        if (values.length === 0) return '';
-        const points = values.map((v, i) => ({ x: xAt(i), y: yAt(v) }));
-        if (points.length === 1) {
-          const p = points[0];
-          return `M ${p.x} ${p.y} L ${p.x} ${p.y}`;
-        }
-
-        const smooth = 0.18;
-        let d = `M ${points[0].x} ${points[0].y}`;
-        for (let i = 1; i < points.length; i++) {
-          const p0 = points[i - 1];
-          const p1 = points[i];
-          const pPrev = points[i - 2] ?? p0;
-          const pNext = points[i + 1] ?? p1;
-
-          const c1x = p0.x + (p1.x - pPrev.x) * smooth;
-          const c1y = p0.y + (p1.y - pPrev.y) * smooth;
-          const c2x = p1.x - (pNext.x - p0.x) * smooth;
-          const c2y = p1.y - (pNext.y - p0.y) * smooth;
-
-          d += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p1.x} ${p1.y}`;
-        }
-        return d;
-      };
-
-      const portfolioPath = makePath(portfolioValues);
-      const depositsPath = makePath(depositsValues);
-
-      const lastX = xAt(lastIndex);
-      const lastY = yAt(portfolioValues[lastIndex] ?? 0);
-
-      return (
-        <View style={styles.valueCompareChartWrap} testID="dashboard-invested-vs-value-chart">
-          <View style={styles.valueCompareLegend}>
-            <View style={styles.valueCompareLegendItem}>
-              <View style={[styles.valueCompareLegendDot, { backgroundColor: '#5B616B' }]} />
-              <Text style={styles.valueCompareLegendText}>Depotwert</Text>
-            </View>
-            <View style={styles.valueCompareLegendItem}>
-              <View style={[styles.valueCompareLegendDot, { backgroundColor: '#A1A6AF' }]} />
-              <Text style={styles.valueCompareLegendText}>Eingezahlt</Text>
-            </View>
-          </View>
-
-          <Svg width={chartWidth} height={chartHeight}>
-            {!!depositsPath && (
-              <Path
-                d={depositsPath}
-                fill="none"
-                stroke="#A1A6AF"
-                strokeWidth={2}
-                strokeDasharray="7 7"
-                strokeLinecap="round"
-                opacity={0.95}
-              />
-            )}
-
-            {!!portfolioPath && (
-              <Path
-                d={portfolioPath}
-                fill="none"
-                stroke="#5B616B"
-                strokeWidth={2.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            )}
-
-            <Circle cx={lastX} cy={lastY} r={5} fill={Colors.background} stroke="#5B616B" strokeWidth={2} />
-          </Svg>
-
-          <View style={styles.valueCompareChartDates}>
-            <Text style={styles.valueCompareChartDateText}>{formatDate(chartSnapshots[0].datum)}</Text>
-            <Text style={styles.valueCompareChartDateText}>{formatDate(chartSnapshots[chartSnapshots.length - 1].datum)}</Text>
-          </View>
-        </View>
-      );
+      }
+      return out;
     };
 
-    return (
-      <View style={styles.valueCompareCard} testID="dashboard-invested-vs-value">
-        <View style={styles.valueCompareHeader}>
-          <Text style={styles.valueCompareTitle}>Eingezahlt vs. Depotwert</Text>
-          <View style={styles.valueComparePill}>
-            <Text style={styles.valueComparePillText}>{formatPercent(deltaPct)}</Text>
-          </View>
-        </View>
+    const portfolioFF = ff(portfolio, currentValue);
+    const paidFF = ff(paid, investedValue);
 
-        {renderMiniChart()}
+    // min/max for scaling
+    const all = [...portfolioFF, ...paidFF];
+    const min = Math.min(...all);
+    const max = Math.max(...all);
+    const range = Math.max(1, max - min);
 
-        <View style={styles.valueCompareNumbers}>
-          <View style={styles.valueCompareCol}>
-            <Text style={styles.valueCompareLabel}>Eingezahlt</Text>
-            <Text style={styles.valueCompareValue}>{formatCurrency(invested)}</Text>
-          </View>
+    const W = SCREEN_WIDTH - 80;
+    const H = 140;
+    const padX = 10;
+    const padY = 10;
 
-          <View style={styles.valueCompareDivider} />
+    const toPoint = (arr: number[]) =>
+      arr.map((v, i) => {
+        const x =
+          arr.length === 1 ? padX : padX + (i * (W - padX * 2)) / Math.max(1, arr.length - 1);
+        const y = padY + ((max - v) / range) * (H - padY * 2);
+        return { x, y };
+      });
 
-          <View style={styles.valueCompareCol}>
-            <Text style={styles.valueCompareLabel}>Depotwert</Text>
-            <Text style={styles.valueCompareValue}>{formatCurrency(current)}</Text>
-          </View>
-        </View>
+    const p1 = toPoint(portfolioFF);
+    const p2 = toPoint(paidFF);
 
-        <View style={styles.valueCompareBar} testID="dashboard-invested-vs-value-bar">
-          <View style={[styles.valueCompareBarFill, { width: `${Math.max(0, Math.min(1, ratio)) * 100}%` }]} />
-        </View>
+    return {
+      width: W,
+      height: H,
+      firstLabel: formatDate((filtered[0] as any).datum),
+      lastLabel: formatDate((filtered[filtered.length - 1] as any).datum),
+      pathPortfolio: makeLinePath(p1),
+      pathPaid: makeLinePath(p2),
+    };
+  }, [snapshots, currentValue, investedValue]);
 
-        <Text
-          style={[
-            styles.valueCompareDelta,
-            { color: delta >= 0 ? Colors.text : Colors.error },
-          ]}
-          testID="dashboard-invested-vs-value-delta"
-        >
-          {delta >= 0 ? 'Gewinn ' : 'Verlust '}
-          {formatCurrency(Math.abs(delta))}
-        </Text>
-      </View>
-    );
-  };
-
-  if (authLoading || !isAuthenticated) {
+  // ---------- UI States ----------
+  if (authLoading || (isAuthenticated && bundleLoading)) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.text} />
-        <Text style={styles.loadingText}>Laden...</Text>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.loadingText}>Lade Portfolio…</Text>
       </View>
     );
   }
 
+  // Logged out state handled by redirect; still guard:
+  if (!isAuthenticated) return null;
 
-
-  const renderETFAllocation = () => {
-    if (etfs.length === 0) {
-      return (
-        <View style={styles.section} testID="dashboard-etf-empty">
-          <Text style={styles.sectionTitle}>ETF-Allokation</Text>
-          <Text style={styles.sectionSubtext}>ETF-Allokation noch nicht synchronisiert.</Text>
-        </View>
-      );
-    }
-
-    const colors = ['#000000', '#333333', '#555555', '#777777', '#999999', '#BBBBBB'];
-
-    return (
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>ETF-Allokation</Text>
-        <View style={styles.etfList}>
-          {etfs.map((etf, index) => (
-            <View key={etf.id || index} style={styles.etfItem}>
-              <View style={styles.etfInfo}>
-                <View style={[styles.etfColorDot, { backgroundColor: colors[index % colors.length] }]} />
-                <View style={styles.etfTextContainer}>
-                  <Text style={styles.etfName} numberOfLines={1}>{etf.name}</Text>
-                  <Text style={styles.etfIsin}>{etf.isin}</Text>
-                </View>
-              </View>
-              <Text style={styles.etfPercent}>{etf.prozent.toFixed(1)}%</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    );
-  };
-
+  // ---------- Render ----------
   return (
     <View style={styles.container}>
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <SafeAreaView style={styles.safeArea}>
         <ScrollView
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={Colors.text}
-            />
-          }
+          contentContainerStyle={{ paddingBottom: 24 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
+          {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.greeting}>{getGreeting()}</Text>
-              <Text style={styles.subtitle}>Ihr Investment Dashboard</Text>
+              <Text style={styles.greeting}>
+                {getGreeting()}
+                {user?.email ? ',' : ''}{' '}
+                <Text style={{ color: Colors.text }}>{user?.email ? user.email.split('@')[0] : ''}</Text>
+              </Text>
+              <Text style={styles.subtitle}>Dein Investment-Überblick</Text>
             </View>
-            <TouchableOpacity
-              style={styles.refreshButton}
-              onPress={onRefresh}
-              disabled={refreshing}
-            >
-              <RefreshCw size={20} color={Colors.text} strokeWidth={1.5} />
+
+            <TouchableOpacity style={styles.refreshButton} onPress={onRefresh} activeOpacity={0.7}>
+              <RefreshCw size={18} color={Colors.text} />
             </TouchableOpacity>
           </View>
 
-          {isDataLoading ? (
-            <View style={styles.loadingCard}>
-              <ActivityIndicator size="large" color={Colors.text} />
-              <Text style={styles.loadingCardText}>Daten werden geladen...</Text>
-            </View>
-          ) : bundleError ? (
-            <View style={styles.emptyCard} testID="dashboard-error-card">
-              <View style={styles.emptyIcon}>
-                <Clock size={40} color={Colors.textSecondary} strokeWidth={1.5} />
-              </View>
-              <Text style={styles.emptyTitle}>Daten konnten nicht geladen werden</Text>
-              <Text style={styles.emptyText}>
-                {(bundleError as any)?.message === 'Failed to fetch' ||
-                String((bundleError as any)?.message ?? '').includes('Failed to fetch')
-                  ? 'Keine Verbindung oder Supabase ist nicht erreichbar.'
-                  : String((bundleError as any)?.message ?? 'Unbekannter Fehler')}
+          {/* Error */}
+          {bundleError ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Fehler beim Laden</Text>
+              <Text style={styles.cardText}>
+                {(bundleError as any)?.message ?? 'Unbekannter Fehler'}
               </Text>
-
-              <TouchableOpacity
-                style={[styles.refreshButton, { marginTop: 18 }]}
-                onPress={onRefresh}
-                disabled={refreshing}
-                testID="dashboard-retry"
-              >
-                <RefreshCw size={20} color={Colors.text} strokeWidth={1.5} />
+              <TouchableOpacity style={styles.primaryBtn} onPress={onRefresh}>
+                <Text style={styles.primaryBtnText}>Erneut versuchen</Text>
               </TouchableOpacity>
             </View>
-          ) : !investment ? (
-            <View style={styles.emptyCard} testID="dashboard-empty-investment">
-              <View style={styles.emptyIcon}>
-                <Clock size={40} color={Colors.textSecondary} strokeWidth={1.5} />
-              </View>
-              <Text style={styles.emptyTitle}>Noch keine Investment-Daten vorhanden</Text>
-              <Text style={styles.emptyText}>
-                Bitte später erneut laden. Wenn es länger dauert: bitte Berater kontaktieren.
+          ) : null}
+
+          {/* Empty */}
+          {!investment ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Noch keine Police gefunden</Text>
+              <Text style={styles.cardText}>
+                Sobald deine Police in Supabase liegt (investments + snapshots + ETFs), wird sie hier angezeigt.
               </Text>
             </View>
           ) : (
             <>
+              {/* KPI Grid */}
               <View style={styles.kpiGrid}>
                 <View style={styles.kpiCard}>
-                  <View style={styles.kpiIconContainer}>
-                    <Wallet size={20} color={Colors.text} strokeWidth={1.5} />
+                  <View style={styles.kpiIcon}>
+                    <Wallet size={18} color={Colors.text} />
                   </View>
-                  <Text style={styles.kpiLabel}>Depotwert aktuell</Text>
-                  <Text style={styles.kpiValue}>{formatCurrency(investment.depotwert)}</Text>
+                  <Text style={styles.kpiLabel}>Depotwert</Text>
+                  <Text style={styles.kpiValue}>{formatCurrency(currentValue)}</Text>
                 </View>
 
                 <View style={styles.kpiCard}>
-                  <View style={styles.kpiIconContainer}>
-                    <CreditCard size={20} color={Colors.text} strokeWidth={1.5} />
+                  <View style={styles.kpiIcon}>
+                    <PiggyBank size={18} color={Colors.text} />
                   </View>
-                  <Text style={styles.kpiLabel}>Monatlicher Beitrag</Text>
-                  <Text style={styles.kpiValue}>{formatCurrency(investment.monatsbeitrag)}</Text>
+                  <Text style={styles.kpiLabel}>Eingezahlt</Text>
+                  <Text style={styles.kpiValue}>{formatCurrency(investedValue)}</Text>
                 </View>
 
-                {investment.einmalzahlung > 0 && (
-                  <View style={styles.kpiCard}>
-                    <View style={styles.kpiIconContainer}>
-                      <PiggyBank size={20} color={Colors.text} strokeWidth={1.5} />
-                    </View>
-                    <Text style={styles.kpiLabel}>Einmalzahlung</Text>
-                    <Text style={styles.kpiValue}>{formatCurrency(investment.einmalzahlung)}</Text>
-                  </View>
-                )}
-
                 <View style={styles.kpiCard}>
-                  <View style={styles.kpiIconContainer}>
-                    {investment.rendite_prozent >= 0 ? (
-                      <TrendingUp size={20} color={Colors.text} strokeWidth={1.5} />
+                  <View style={styles.kpiIcon}>
+                    {delta >= 0 ? (
+                      <TrendingUp size={18} color={Colors.text} />
                     ) : (
-                      <TrendingDown size={20} color={Colors.text} strokeWidth={1.5} />
+                      <TrendingDown size={18} color={Colors.text} />
                     )}
                   </View>
-                  <Text style={styles.kpiLabel}>Rendite</Text>
-                  <Text style={[
-                    styles.kpiValue,
-                    { color: investment.rendite_prozent >= 0 ? Colors.text : Colors.error }
-                  ]}>
-                    {formatPercent(investment.rendite_prozent)}
+                  <Text style={styles.kpiLabel}>Performance</Text>
+                  <Text style={styles.kpiValue}>{formatPercent(deltaPct)}</Text>
+                </View>
+
+                <View style={styles.kpiCard}>
+                  <View style={styles.kpiIcon}>
+                    <Calendar size={18} color={Colors.text} />
+                  </View>
+                  <Text style={styles.kpiLabel}>Start</Text>
+                  <Text style={styles.kpiValueSmall}>{formatDate((investment as any).startdatum)}</Text>
+                </View>
+              </View>
+
+              {/* Chart */}
+              <View style={styles.card}>
+                <View style={styles.cardHeaderRow}>
+                  <Text style={styles.cardTitle}>Entwicklung (12 Monate)</Text>
+                  <View style={styles.chip}>
+                    <Text style={styles.chipText}>Depot vs. Einzahlungen</Text>
+                  </View>
+                </View>
+
+                {!chartData ? (
+                  <Text style={styles.cardText}>
+                    Noch zu wenig Historie. Sobald mehrere Snapshots (portfolio_snapshots) vorhanden sind, erscheint hier die Kurve.
                   </Text>
+                ) : (
+                  <View style={styles.chartWrap}>
+                    <View style={styles.legendRow}>
+                      <View style={styles.legendItem}>
+                        <View style={[styles.dot, { opacity: 0.9 }]} />
+                        <Text style={styles.legendText}>Depotwert</Text>
+                      </View>
+                      <View style={styles.legendItem}>
+                        <View style={[styles.dot, { opacity: 0.35 }]} />
+                        <Text style={styles.legendText}>Eingezahlt</Text>
+                      </View>
+                    </View>
+
+                    <Svg width={chartData.width} height={chartData.height}>
+                      <Path d={chartData.pathPaid} stroke={Colors.text} strokeWidth={2} opacity={0.35} fill="none" />
+                      <Path d={chartData.pathPortfolio} stroke={Colors.text} strokeWidth={2} opacity={0.9} fill="none" />
+                    </Svg>
+
+                    <View style={styles.chartDates}>
+                      <Text style={styles.chartDateText}>{chartData.firstLabel}</Text>
+                      <Text style={styles.chartDateText}>{chartData.lastLabel}</Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+
+              {/* Investment Details */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Deine Police</Text>
+
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>Produkt</Text>
+                  <Text style={styles.rowValue}>{(investment as any).produkt}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>Anbieter</Text>
+                  <Text style={styles.rowValue}>{(investment as any).anbieter}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>Monatsbeitrag</Text>
+                  <Text style={styles.rowValue}>{formatCurrency(toNum((investment as any).monatsbeitrag) ?? 0)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>Einmalzahlung</Text>
+                  <Text style={styles.rowValue}>{formatCurrency(toNum((investment as any).einmalzahlung) ?? 0)}</Text>
                 </View>
               </View>
 
-              {renderInvestedVsValue()}
-
-              <View style={styles.investmentDetails}>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Produkt</Text>
-                  <Text style={styles.detailValue}>{investment.produkt}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Anbieter</Text>
-                  <Text style={styles.detailValue}>{investment.anbieter}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Vertragsbeginn</Text>
-                  <Text style={styles.detailValue}>{formatDate(investment.startdatum)}</Text>
-                </View>
+              {/* ETF Allocation */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>ETF-Allokation</Text>
+                {etfs.length === 0 ? (
+                  <Text style={styles.sectionText}>Keine ETFs hinterlegt.</Text>
+                ) : (
+                  <View style={styles.list}>
+                    {etfs.map((e, idx) => (
+                      <View key={`${(e as any).isin}-${idx}`} style={styles.listRow}>
+                        <View style={styles.listLeft}>
+                          <View style={styles.colorDot} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.listTitle}>{(e as any).name ?? (e as any).isin}</Text>
+                            <Text style={styles.listSub}>{(e as any).isin}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.listRight}>
+                          {`${(toNum((e as any).prozent) ?? 0).toFixed(0)}%`}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </View>
 
-              {renderETFAllocation()}
-
+              {/* CTA */}
               <TouchableOpacity
-                style={styles.appointmentButton}
+                style={styles.primaryBtnBig}
                 onPress={() => router.push('/appointments')}
-                activeOpacity={0.7}
+                activeOpacity={0.8}
               >
-                <Calendar size={20} color={Colors.background} strokeWidth={1.5} />
-                <Text style={styles.appointmentButtonText}>Termin buchen</Text>
+                <Calendar size={20} color={Colors.background} />
+                <Text style={styles.primaryBtnText}>Termin buchen</Text>
               </TouchableOpacity>
+
+              <View style={styles.footer}>
+                <Text style={styles.footerText}>Daten werden automatisch aktualisiert</Text>
+              </View>
             </>
           )}
-
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Daten werden automatisch aktualisiert</Text>
-          </View>
         </ScrollView>
       </SafeAreaView>
     </View>
   );
 }
 
+// ---------- Styles ----------
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  safeArea: {
-    flex: 1,
-  },
+  container: { flex: 1, backgroundColor: Colors.background },
+  safeArea: { flex: 1 },
+
   loadingContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
     backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: Colors.textSecondary,
-  },
+  loadingText: { marginTop: 12, fontSize: 16, color: Colors.textSecondary },
+
   header: {
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 18,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    paddingHorizontal: 24,
-    paddingTop: 16,
-    paddingBottom: 24,
   },
-  greeting: {
-    fontSize: 28,
-    fontWeight: '700' as const,
-    color: Colors.text,
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontSize: 15,
-    color: Colors.textSecondary,
-    marginTop: 4,
-  },
+  greeting: { fontSize: 26, fontWeight: '700', color: Colors.text, letterSpacing: -0.4 },
+  subtitle: { marginTop: 4, fontSize: 14, color: Colors.textSecondary },
+
   refreshButton: {
     width: 44,
     height: 44,
@@ -703,53 +489,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  loadingCard: {
-    marginHorizontal: 24,
-    padding: 48,
-    backgroundColor: Colors.backgroundSecondary,
-    borderRadius: 16,
-    alignItems: 'center',
-    gap: 16,
-  },
-  loadingCardText: {
-    fontSize: 15,
-    color: Colors.textSecondary,
-  },
-  emptyCard: {
-    marginHorizontal: 24,
-    padding: 32,
-    backgroundColor: Colors.backgroundSecondary,
-    borderRadius: 16,
-    alignItems: 'center',
-  },
-  emptyIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: Colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600' as const,
-    color: Colors.text,
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  emptyText: {
-    fontSize: 15,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
+
   kpiGrid: {
+    paddingHorizontal: 20,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: 20,
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 12,
   },
   kpiCard: {
     width: (SCREEN_WIDTH - 52) / 2,
@@ -757,45 +503,37 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
   },
-  kpiIconContainer: {
+  kpiIcon: {
     width: 36,
     height: 36,
-    borderRadius: 8,
+    borderRadius: 10,
     backgroundColor: Colors.background,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  kpiLabel: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    marginBottom: 4,
-  },
-  kpiValue: {
-    fontSize: 20,
-    fontWeight: '700' as const,
-    color: Colors.text,
-  },
-  valueCompareCard: {
+  kpiLabel: { fontSize: 12, color: Colors.textSecondary, marginBottom: 4 },
+  kpiValue: { fontSize: 18, fontWeight: '700', color: Colors.text },
+  kpiValueSmall: { fontSize: 14, fontWeight: '700', color: Colors.text },
+
+  card: {
     marginHorizontal: 24,
     backgroundColor: Colors.backgroundSecondary,
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
   },
-  valueCompareHeader: {
+  cardHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 14,
+    gap: 12,
+    marginBottom: 10,
   },
-  valueCompareTitle: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    color: Colors.text,
-    letterSpacing: -0.2,
-  },
-  valueComparePill: {
+  cardTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
+  cardText: { fontSize: 14, lineHeight: 20, color: Colors.textSecondary },
+
+  chip: {
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 999,
@@ -803,279 +541,84 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  valueComparePillText: {
-    fontSize: 12,
-    fontWeight: '600' as const,
-    color: Colors.textSecondary,
-  },
-  valueCompareChartWrap: {
-    marginBottom: 14,
+  chipText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
+
+  chartWrap: {
+    marginTop: 6,
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: Colors.background,
     borderWidth: 1,
     borderColor: Colors.borderLight,
+    padding: 12,
   },
-  valueCompareLegend: {
+  legendRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 8,
-    backgroundColor: Colors.background,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
-  },
-  valueCompareLegendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  valueCompareLegendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  valueCompareLegendText: {
-    fontSize: 12,
-    fontWeight: '600' as const,
-    color: Colors.textSecondary,
-  },
-  valueCompareChartDates: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    paddingTop: 6,
-    backgroundColor: Colors.background,
-    borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
-  },
-  valueCompareChartDateText: {
-    fontSize: 11,
-    color: Colors.textTertiary,
-  },
-  valueCompareNumbers: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  valueCompareCol: {
-    flex: 1,
-  },
-  valueCompareDivider: {
-    width: 1,
-    height: 34,
-    backgroundColor: Colors.border,
-    marginHorizontal: 12,
-  },
-  valueCompareLabel: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    marginBottom: 4,
-  },
-  valueCompareValue: {
-    fontSize: 18,
-    fontWeight: '700' as const,
-    color: Colors.text,
-  },
-  valueCompareBar: {
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
-    overflow: 'hidden',
-  },
-  valueCompareBarFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: Colors.text,
-    opacity: 0.85,
-  },
-  valueCompareDelta: {
-    marginTop: 10,
-    fontSize: 13,
-    fontWeight: '600' as const,
-  },
-  investmentDetails: {
-    marginHorizontal: 24,
-    backgroundColor: Colors.backgroundSecondary,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  detailLabel: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-  },
-  detailValue: {
-    fontSize: 14,
-    fontWeight: '500' as const,
-    color: Colors.text,
-  },
-  chartContainer: {
-    marginHorizontal: 24,
-    backgroundColor: Colors.backgroundSecondary,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-  },
-  chartTitle: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  chartLegend: {
-    flexDirection: 'row',
-    gap: 16,
-    marginBottom: 16,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  legendText: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-  },
-  chartHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 8,
   },
-  chartChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  chartChipText: {
-    fontSize: 12,
-    fontWeight: '600' as const,
-    color: Colors.textSecondary,
-    letterSpacing: 0.2,
-  },
-  chartWrapper: {
-    alignItems: 'center',
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
-  },
-  chartLine: {
-    overflow: 'hidden',
-  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.text },
+  legendText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
+
   chartDates: {
+    marginTop: 6,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 8,
   },
-  chartDateText: {
-    fontSize: 11,
-    color: Colors.textTertiary,
-  },
-  section: {
-    marginHorizontal: 24,
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600' as const,
-    color: Colors.text,
-    marginBottom: 16,
-  },
-  sectionSubtext: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    lineHeight: 20,
-  },
-  etfList: {
-    backgroundColor: Colors.backgroundSecondary,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  etfItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
+  chartDateText: { fontSize: 11, color: Colors.textTertiary },
+
+  row: {
+    paddingVertical: 9,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
-  },
-  etfInfo: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  rowLabel: { fontSize: 13, color: Colors.textSecondary },
+  rowValue: { fontSize: 13, fontWeight: '600', color: Colors.text, textAlign: 'right', flexShrink: 1 },
+
+  section: { marginHorizontal: 24, marginBottom: 16 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: Colors.text, marginBottom: 10 },
+  sectionText: { fontSize: 14, color: Colors.textSecondary },
+
+  list: { backgroundColor: Colors.backgroundSecondary, borderRadius: 12, overflow: 'hidden' },
+  listRow: {
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    flex: 1,
-    marginRight: 12,
   },
-  etfColorDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 12,
+  listLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, paddingRight: 12 },
+  colorDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: Colors.text, opacity: 0.25 },
+  listTitle: { fontSize: 14, fontWeight: '600', color: Colors.text },
+  listSub: { fontSize: 12, color: Colors.textTertiary, marginTop: 2 },
+  listRight: { fontSize: 14, fontWeight: '800', color: Colors.text },
+
+  primaryBtn: {
+    marginTop: 12,
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
   },
-  etfTextContainer: {
-    flex: 1,
-  },
-  etfName: {
-    fontSize: 14,
-    fontWeight: '500' as const,
-    color: Colors.text,
-    marginBottom: 2,
-  },
-  etfIsin: {
-    fontSize: 12,
-    color: Colors.textTertiary,
-  },
-  etfPercent: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    color: Colors.text,
-  },
-  appointmentButton: {
-    flexDirection: 'row',
+  primaryBtnBig: {
+    marginHorizontal: 24,
+    marginTop: 6,
+    marginBottom: 16,
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingVertical: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.primary,
-    marginHorizontal: 24,
-    paddingVertical: 16,
-    borderRadius: 12,
+    flexDirection: 'row',
     gap: 8,
-    marginBottom: 24,
   },
-  appointmentButtonText: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    color: Colors.background,
-  },
-  footer: {
-    paddingHorizontal: 24,
-    paddingBottom: 24,
-    alignItems: 'center',
-  },
-  footerText: {
-    fontSize: 13,
-    color: Colors.textTertiary,
-  },
+  primaryBtnText: { color: Colors.background, fontSize: 16, fontWeight: '700' },
+
+  footer: { alignItems: 'center', paddingBottom: 10 },
+  footerText: { fontSize: 12, color: Colors.textTertiary },
 });
